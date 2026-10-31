@@ -22,6 +22,13 @@ class SWPS_GitHub_Updater {
     /* ── CONFIG — yahan apni details bharein ──────────────────────────── */
     const GITHUB_USER = 'ansariyaaeen361-arch';
     const GITHUB_REPO = 'securewp-shield';
+
+    // Baked-in READ-ONLY token (sirf is repo ko Contents:Read deta hai).
+    // Yahan token daal do -> har release/site par khud chala jayega,
+    // kisi site ke wp-config me manually daalne ki zaroorat NAHI.
+    // (wp-config ka SWPS_GITHUB_TOKEN constant isko override kar sakta hai.)
+    const BAKED_TOKEN = '';
+    /* ─────────────────────────────────────────────────────────────────── */
     /* ─────────────────────────────────────────────────────────────────── */
 
     private static $plugin_file;   // "securewp-shield/securewp-shield.php"
@@ -43,8 +50,10 @@ class SWPS_GitHub_Updater {
 
     /* ── GitHub token (constant pehle, phir option) ───────────────────── */
     private static function token() {
-        if ( defined( 'SWPS_GITHUB_TOKEN' ) && SWPS_GITHUB_TOKEN ) return SWPS_GITHUB_TOKEN;
-        return trim( (string) get_option( 'swps_github_token', '' ) );
+        if ( defined( 'SWPS_GITHUB_TOKEN' ) && SWPS_GITHUB_TOKEN ) return SWPS_GITHUB_TOKEN; // wp-config override
+        $opt = trim( (string) get_option( 'swps_github_token', '' ) );                       // admin setting
+        if ( $opt ) return $opt;
+        return self::BAKED_TOKEN;                                                             // baked default
     }
 
     private static function api_args() {
