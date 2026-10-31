@@ -58,6 +58,14 @@ jQuery(document).ready(function($) {
             if (response.success) {
                 btn.text('Blocked').css({background:'#c0392b',color:'#fff',cursor:'default'}).prop('disabled', true);
                 showToast('IP ' + ip + ' has been blocked.', 'success');
+                // Fix: the "Currently Blocked IPs" table below is rendered
+                // once, server-side, at page load — this AJAX call updates
+                // the database but that table has no way to know, so it
+                // kept showing "0 blocked" / the IP missing from the list
+                // even though the block genuinely succeeded. A reload is
+                // the simplest way to guarantee the list is ever accurate
+                // after this action.
+                setTimeout(function(){ location.reload(); }, 900);
             } else {
                 btn.prop('disabled', false).text('Block');
                 showToast((response.data && response.data.message) || 'Block failed.', 'error');
