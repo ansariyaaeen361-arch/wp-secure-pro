@@ -173,11 +173,41 @@ class SWPS_WAF {
 
         // 8. Fake Google/Bing bot check
         if ( strpos( $ua, 'googlebot' ) !== false || strpos( $ua, 'bingbot' ) !== false ) {
-            $hostname = gethostbyaddr( $ip );
-            if ( strpos( $hostname, 'googlebot.com' ) === false && strpos( $hostname, 'search.msn.com' ) === false ) {
+            if ( self::is_fake_crawler( $ip ) ) {
                 self::block_request( "Fake crawler detected: $ua", 'fake_bot', $ip );
             }
         }
+    }
+
+    /**
+     * Verifies a claimed Googlebot/Bingbot visitor the way Google and
+     * Microsoft actually document: reverse-DNS the IP, confirm the
+     * hostname belongs to the real crawler's domain, THEN forward-resolve
+     * that hostname and confirm it maps back to the SAME IP. A single
+     * reverse lookup alone (the previous check) can't rule out DNS
+     * spoofing, and — the more common real-world failure — blindly trusts
+     * whatever gethostbyaddr() returns even when DNS is slow/unavailable,
+     * at which point it just echoes the IP back with no hostname at all,
+     * which would have wrongly "convicted" a genuine Googlebot visit of
+     * being fake. False negatives here (an attacker evades this one check)
+     * still hit every other WAF rule; false positives here cost real SEO
+     * traffic, so on any DNS uncertainty this fails OPEN — not fake.
+     */
+    private static function is_fake_crawler( $ip ) {
+        $hostname = @gethostbyaddr( $ip );
+        if ( ! $hostname || $hostname === $ip ) return false; // reverse DNS unavailable — don't convict on missing data
+
+        $valid_suffixes = array( '.googlebot.com', '.google.com', '.search.msn.com' );
+        $matched = false;
+        foreach ( $valid_suffixes as $suffix ) {
+            if ( substr( $hostname, -strlen($suffix) ) === $suffix ) { $matched = true; break; }
+        }
+        if ( ! $matched ) return true; // hostname doesn't belong to Google/Bing at all — genuinely fake
+
+        // Forward-confirm: the claimed hostname must resolve back to this exact IP.
+        $forward_ip = @gethostbyname( $hostname );
+        if ( ! $forward_ip || $forward_ip === $hostname ) return false; // forward lookup unavailable — don't convict on missing data
+        return $forward_ip !== $ip;
     }
 
     private static function block_request( $reason, $type, $ip ) {
