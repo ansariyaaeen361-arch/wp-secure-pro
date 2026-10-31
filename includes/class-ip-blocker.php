@@ -57,6 +57,9 @@ class SWPS_IP_Blocker {
             ),
             array('%s','%s','%s', $expires ? '%s' : null )
         );
+        if ( class_exists('SWPS_Live_Traffic') ) {
+            SWPS_Live_Traffic::log_attack( $ip, $reason );
+        }
         do_action( 'swps_ip_blocked', $ip, $reason );
         return true;
     }

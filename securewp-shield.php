@@ -3,7 +3,7 @@
  * Plugin Name: SecureWP Shield
  * Plugin URI:  https://yoursite.com
  * Description: Enterprise WordPress Security Suite — WAF, 2FA, Full Site Scan, Core Repair, Honeypot, Rate Limiter, Challenge Page, DNA Scanner, Canary Tokens, IP Reputation, SIEM, Multi-Site Monitor, Threat Feed Server
- * Version:     5.0.1
+ * Version:     5.0.8
  * Author:      Yaseen
  * Author URI:  https://yoursite.com
  * Text Domain: securewp-shield
@@ -12,7 +12,7 @@
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-define( 'SWPS_VERSION',     '5.0.1' );
+define( 'SWPS_VERSION',     '5.0.8' );
 define( 'SWPS_AUTHOR',      'Yaseen' );
 define( 'SWPS_PLUGIN_DIR',  plugin_dir_path( __FILE__ ) );
 define( 'SWPS_PLUGIN_URL',  plugin_dir_url( __FILE__ ) );
@@ -28,6 +28,8 @@ require_once SWPS_PLUGIN_DIR . 'includes/class-login-protection.php';
 require_once SWPS_PLUGIN_DIR . 'includes/class-ip-blocker.php';
 require_once SWPS_PLUGIN_DIR . 'includes/class-admin-monitor.php';
 require_once SWPS_PLUGIN_DIR . 'includes/class-scanner.php';
+require_once SWPS_PLUGIN_DIR . 'includes/class-github-updater.php';
+add_action( 'init', array( 'SWPS_GitHub_Updater', 'init' ) );
 
 // ─── Phase 1: Advanced protection ─────────────────────────────────────────────
 require_once SWPS_PLUGIN_DIR . 'includes/class-waf.php';
@@ -92,9 +94,6 @@ require_once SWPS_PLUGIN_DIR . 'includes/class-siem-export.php';
 require_once SWPS_PLUGIN_DIR . 'includes/class-multisite-monitor.php';
 require_once SWPS_PLUGIN_DIR . 'includes/class-threat-feed-server.php';
 
-// ─── Self-hosted updates (private GitHub repo) ────────────────────────────────
-require_once SWPS_PLUGIN_DIR . 'includes/class-github-updater.php';
-
 // ─── Custom cron intervals ────────────────────────────────────────────────────
 add_filter('cron_schedules', function($schedules) {
     if (!isset($schedules['swps_5min'])) {
@@ -133,6 +132,7 @@ function swps_init() {
     SWPS_DB::maybe_apply_defaults();
 
     // Core
+    SWPS_Email_Alerts::init();
     SWPS_Activity_Log::init();
     SWPS_Login_Protection::init();
     SWPS_IP_Blocker::init();
@@ -198,12 +198,26 @@ function swps_init() {
     SWPS_SIEM_Export::init();
     SWPS_Multisite_Monitor::init();
     SWPS_Threat_Feed_Server::init();
-
-    // Self-hosted updates
-    SWPS_GitHub_Updater::init();
 }
 
 // ─── Admin menu ───────────────────────────────────────────────────────────────
+
+/**
+ * Other plugins' promo banners/upsell notices (admin_notices) render on
+ * EVERY wp-admin screen by default, including ours — cluttering a security
+ * dashboard with unrelated "Upgrade to Pro" banners from other plugins. This
+ * plugin has no admin_notices of its own to lose, so on our own pages only
+ * (never elsewhere in wp-admin) we drop every other plugin's notices.
+ */
+add_action( 'current_screen', 'swps_suppress_foreign_admin_notices' );
+function swps_suppress_foreign_admin_notices( $screen ) {
+    $page = isset( $_GET['page'] ) ? sanitize_key( wp_unslash( $_GET['page'] ) ) : '';
+    if ( strpos( $page, 'swps-' ) !== 0 ) return;
+    remove_all_actions( 'admin_notices' );
+    remove_all_actions( 'all_admin_notices' );
+    remove_all_actions( 'network_admin_notices' );
+}
+
 add_action( 'admin_menu', 'swps_admin_menu' );
 function swps_admin_menu() {
     $wl       = get_option('swps_white_label', array());
@@ -211,44 +225,167 @@ function swps_admin_menu() {
 
     add_menu_page(
         $menu_name, $menu_name, 'manage_options',
-        'swps-dashboard', 'swps_dashboard_page',
+        'swps-dashboard', 'swps_shell_dashboard',
         'dashicons-shield', 2
     );
 
-    // Primary pages
-    add_submenu_page( 'swps-dashboard', 'Dashboard',        'Dashboard',        'manage_options', 'swps-dashboard',      'swps_dashboard_page' );
-    add_submenu_page( 'swps-dashboard', 'Activity Log',     'Activity Log',     'manage_options', 'swps-activity-log',   'swps_activity_log_page' );
-    add_submenu_page( 'swps-dashboard', 'IP Blocker',       'IP Blocker',       'manage_options', 'swps-ip-blocker',     'swps_ip_blocker_page' );
-    add_submenu_page( 'swps-dashboard', 'Security Scanner', 'Security Scanner', 'manage_options', 'swps-scanner',        'swps_scanner_page' );
-    add_submenu_page( 'swps-dashboard', '⚡ Full Site Scan', '⚡ Full Scan',    'manage_options', 'swps-full-scan',      'swps_full_scan_page' );
+    // ── Visible sidebar (9 items) — everything else below is grouped under
+    // these via tabs, so a site owner isn't facing 23 separate pages. Each
+    // is wrapped in swps_shell_*() (see swps_page_shell()) so its output
+    // sits inside a stable #swps-page-content container that JS can swap
+    // out for AJAX-driven navigation (see swps_ajax_load_page()). ──
+    add_submenu_page( 'swps-dashboard', 'Dashboard',           'Dashboard',             'manage_options', 'swps-dashboard',    'swps_shell_dashboard' );
+    add_submenu_page( 'swps-dashboard', '⚡ Full Site Scan',    '⚡ Full Scan',          'manage_options', 'swps-full-scan',    'swps_shell_full_scan' );
+    add_submenu_page( 'swps-dashboard', 'Firewall & Hardening','Firewall & Hardening',  'manage_options', 'swps-firewall',     'swps_shell_firewall' );
+    add_submenu_page( 'swps-dashboard', 'File & Core Protection','File & Core Protection','manage_options','swps-protection',  'swps_shell_protection' );
+    add_submenu_page( 'swps-dashboard', 'Access Control',      'Access Control',        'manage_options', 'swps-access',       'swps_shell_access' );
+    add_submenu_page( 'swps-dashboard', 'Monitoring & Logs',   'Monitoring & Logs',     'manage_options', 'swps-monitoring',   'swps_shell_monitoring' );
+    add_submenu_page( 'swps-dashboard', 'Threat Intelligence', 'Threat Intelligence',   'manage_options', 'swps-threat-intel', 'swps_shell_threat_intel' );
+    add_submenu_page( 'swps-dashboard', 'Multi-Site',          'Multi-Site',            'manage_options', 'swps-multisite',    'swps_shell_multisite' );
+    add_submenu_page( 'swps-dashboard', 'Settings',            'Settings',              'manage_options', 'swps-settings',     'swps_shell_settings' );
 
-    // Phase 1
-    add_submenu_page( 'swps-dashboard', 'Firewall (WAF)',   'Firewall (WAF)',   'manage_options', 'swps-waf',            'swps_waf_page' );
-    add_submenu_page( 'swps-dashboard', '2FA',              'Two-Factor Auth',  'manage_options', 'swps-2fa',            'swps_2fa_page' );
-    add_submenu_page( 'swps-dashboard', 'Hardening',        'Hardening',        'manage_options', 'swps-hardening',      'swps_hardening_page' );
-    add_submenu_page( 'swps-dashboard', 'Sec Headers',      'Sec Headers',      'manage_options', 'swps-headers',        'swps_headers_page' );
+    // ── Hidden pages — still fully reachable by URL (AJAX handlers, direct
+    // links, bookmarks keep working), just no longer shown in the sidebar
+    // since their content now lives as a tab inside one of the 9 pages above.
+    $hidden = array(
+        array( 'Activity Log',     'swps-activity-log',   'swps_activity_log_page' ),
+        array( 'IP Blocker',       'swps-ip-blocker',     'swps_ip_blocker_page' ),
+        array( 'Security Scanner', 'swps-scanner',        'swps_scanner_page' ),
+        array( 'Firewall (WAF)',   'swps-waf',            'swps_waf_page' ),
+        array( 'Two-Factor Auth',  'swps-2fa',            'swps_2fa_page' ),
+        array( 'Hardening',        'swps-hardening',      'swps_hardening_page' ),
+        array( 'Security Headers', 'swps-headers',        'swps_headers_page' ),
+        array( 'Live Traffic',     'swps-live-traffic',   'swps_live_traffic_page' ),
+        array( 'Vuln Scanner',     'swps-vuln-scanner',   'swps_vuln_scanner_page' ),
+        array( 'DB Monitor',       'swps-db-monitor',     'swps_db_monitor_page' ),
+        array( 'File Integrity',   'swps-file-integrity', 'swps_file_integrity_page' ),
+        array( 'Sessions',         'swps-sessions',       'swps_sessions_page' ),
+        array( 'Uptime Monitor',   'swps-uptime',         'swps_uptime_page' ),
+        array( 'Attack Map',       'swps-attack-map',     'swps_attack_map_page' ),
+        array( 'Timeline',         'swps-timeline',       'swps_timeline_page' ),
+        array( 'Audit Trail',      'swps-audit',          'swps_audit_page' ),
+        array( 'Core Repair',      'swps-core-repair',    'swps_core_repair_page' ),
+        array( 'Advanced',         'swps-advanced',       'swps_advanced_page' ),
+    );
+    foreach ( $hidden as $p ) {
+        add_submenu_page( null, $p[0], $p[0], 'manage_options', $p[1], $p[2] );
+    }
+}
 
-    // Phase 2
-    add_submenu_page( 'swps-dashboard', 'Live Traffic',     'Live Traffic',     'manage_options', 'swps-live-traffic',   'swps_live_traffic_page' );
-    add_submenu_page( 'swps-dashboard', 'Vuln Scanner',     'Vuln Scanner',     'manage_options', 'swps-vuln-scanner',   'swps_vuln_scanner_page' );
-    add_submenu_page( 'swps-dashboard', 'DB Monitor',       'DB Monitor',       'manage_options', 'swps-db-monitor',     'swps_db_monitor_page' );
+/**
+ * Renders the group-level tab bar and includes exactly the one original
+ * page file for the active tab. Only one original page's markup/JS is ever
+ * in the DOM at a time, so this carries zero risk of the ID/JS collisions
+ * that merging multiple pages' HTML into one DOM would risk.
+ *
+ * Fix: this used to use the same .swps-tabs/.swps-tab/.swps-tab-active
+ * classes that several of the included pages (Threat Intelligence,
+ * Multi-Site, Advanced Settings) already use for their OWN internal
+ * JS-driven tabs — nesting a group tab bar around a page with its own tab
+ * bar of the identical classname broke both the layout (CSS meant for one
+ * tab bar applied to two nested ones) and the inner page's own tab-switch
+ * JS (which matched ALL .swps-tab elements, including the outer, real-link
+ * ones). The group bar now uses its own swps-gtabs/swps-gtab namespace so
+ * it never collides with an included page's internal tabs.
+ *
+ * Fix: tab clicks used to be plain links (full page reload on every click).
+ * They're now intercepted with JS and the new tab's HTML is fetched over
+ * admin-ajax and swapped in — same current data, no full navigation reload.
+ * The plain <a href> is kept as-is so the tab still works with JS off, and
+ * as the real bookmarkable/shareable URL.
+ *
+ * @param array  $tabs    tab_slug => array( 'label' => ..., 'file' => 'admin/page-x.php' )
+ * @param string $page    current ?page= slug (for building tab links)
+ */
+function swps_render_group_tabs( $title, $icon, $tabs, $page ) {
+    $current = isset( $_GET['tab'] ) ? sanitize_key( $_GET['tab'] ) : array_key_first( $tabs );
+    if ( ! isset( $tabs[ $current ] ) ) $current = array_key_first( $tabs );
+    ?>
+    <div class="swps-gtab-bar">
+        <h1 class="swps-page-title"><span class="dashicons <?php echo esc_attr($icon); ?>"></span> <?php echo esc_html($title); ?></h1>
+        <div class="swps-gtabs" data-swps-group-page="<?php echo esc_attr($page); ?>">
+            <?php foreach ( $tabs as $slug => $t ) : ?>
+                <a class="swps-gtab <?php echo $slug === $current ? 'swps-gtab-active' : ''; ?>"
+                   data-tab="<?php echo esc_attr($slug); ?>"
+                   href="<?php echo esc_url( admin_url( 'admin.php?page=' . $page . '&tab=' . $slug ) ); ?>"><?php echo esc_html( $t['label'] ); ?></a>
+            <?php endforeach; ?>
+        </div>
+    </div>
+    <div id="swps-gtab-content">
+    <?php
+    // Fix: this container used to be a second, OUTER .wrap.swps-wrap, with
+    // the included page's own .wrap.swps-wrap nested directly inside it —
+    // nesting WordPress's .wrap container inside itself double-applies our
+    // own width/margin/padding rules and was part of why the tab bar
+    // rendered squeezed into a vertical sliver. The outer shell above is now
+    // a plain, unrelated wrapper; the included page below provides the only
+    // real .wrap on the page, exactly as it does when visited directly.
+    include SWPS_PLUGIN_DIR . $tabs[ $current ]['file'];
+    ?>
+    </div>
+    <?php
+}
 
-    // Tier 1–4
-    add_submenu_page( 'swps-dashboard', 'File Integrity',   'File Integrity',   'manage_options', 'swps-file-integrity', 'swps_file_integrity_page' );
-    add_submenu_page( 'swps-dashboard', 'Sessions',         'Sessions',         'manage_options', 'swps-sessions',       'swps_sessions_page' );
-    add_submenu_page( 'swps-dashboard', 'Uptime Monitor',   'Uptime Monitor',   'manage_options', 'swps-uptime',         'swps_uptime_page' );
-    add_submenu_page( 'swps-dashboard', 'Attack Map',       'Attack Map',       'manage_options', 'swps-attack-map',     'swps_attack_map_page' );
-    add_submenu_page( 'swps-dashboard', 'Timeline',         'Timeline',         'manage_options', 'swps-timeline',       'swps_timeline_page' );
-    add_submenu_page( 'swps-dashboard', 'Audit Trail',      'Audit Trail',      'manage_options', 'swps-audit',          'swps_audit_page' );
+/**
+ * Maps every one of the 9 sidebar page slugs to its real render function.
+ * Single source of truth used by both the normal (full-load) submenu
+ * registration and the AJAX nav dispatcher below, so the two can never
+ * drift out of sync.
+ */
+function swps_page_registry() {
+    return array(
+        'swps-dashboard'    => 'swps_dashboard_page',
+        'swps-full-scan'    => 'swps_full_scan_page',
+        'swps-firewall'     => 'swps_group_firewall_page',
+        'swps-protection'   => 'swps_group_protection_page',
+        'swps-access'       => 'swps_group_access_page',
+        'swps-monitoring'   => 'swps_group_monitoring_page',
+        'swps-threat-intel' => 'swps_threat_intel_page',
+        'swps-multisite'    => 'swps_multisite_page',
+        'swps-settings'     => 'swps_group_settings_page',
+    );
+}
 
-    // Tier 5-7
-    add_submenu_page( 'swps-dashboard', 'Core Repair',      'Core Repair',      'manage_options', 'swps-core-repair',    'swps_core_repair_page' );
-    add_submenu_page( 'swps-dashboard', 'Threat Intel',     'Threat Intel',     'manage_options', 'swps-threat-intel',   'swps_threat_intel_page' );
-    add_submenu_page( 'swps-dashboard', 'Multi-Site',       'Multi-Site',       'manage_options', 'swps-multisite',      'swps_multisite_page' );
+/**
+ * Wraps a page's real render function in a stable #swps-page-content
+ * container so JS has something consistent to replace for AJAX-driven
+ * navigation (see swps_ajax_load_page() and the click handler in
+ * admin/js/script.js) — switching between the 9 sidebar pages, or between
+ * tabs within a grouped one, no longer triggers a full browser reload.
+ */
+function swps_page_shell( $page_slug ) {
+    echo '<div id="swps-page-content">';
+    $registry = swps_page_registry();
+    if ( isset( $registry[ $page_slug ] ) ) call_user_func( $registry[ $page_slug ] );
+    echo '</div>';
+}
+function swps_shell_dashboard()    { swps_page_shell( 'swps-dashboard' ); }
+function swps_shell_full_scan()    { swps_page_shell( 'swps-full-scan' ); }
+function swps_shell_firewall()     { swps_page_shell( 'swps-firewall' ); }
+function swps_shell_protection()   { swps_page_shell( 'swps-protection' ); }
+function swps_shell_access()       { swps_page_shell( 'swps-access' ); }
+function swps_shell_monitoring()   { swps_page_shell( 'swps-monitoring' ); }
+function swps_shell_threat_intel() { swps_page_shell( 'swps-threat-intel' ); }
+function swps_shell_multisite()    { swps_page_shell( 'swps-multisite' ); }
+function swps_shell_settings()     { swps_page_shell( 'swps-settings' ); }
 
-    // Settings (last)
-    add_submenu_page( 'swps-dashboard', 'Settings',         'Settings',         'manage_options', 'swps-settings',       'swps_settings_page' );
-    add_submenu_page( 'swps-dashboard', 'Advanced',         'Advanced',         'manage_options', 'swps-advanced',       'swps_advanced_page' );
+add_action( 'wp_ajax_swps_load_page', 'swps_ajax_load_page' );
+function swps_ajax_load_page() {
+    check_ajax_referer( 'swps_nonce', 'nonce' );
+    if ( ! current_user_can('manage_options') ) wp_send_json_error( 'Unauthorized' );
+
+    $page = isset( $_POST['page'] ) ? sanitize_key( $_POST['page'] ) : '';
+    $tab  = isset( $_POST['tab'] )  ? sanitize_key( $_POST['tab'] )  : '';
+    $registry = swps_page_registry();
+
+    if ( ! isset( $registry[ $page ] ) ) wp_send_json_error( 'Unknown page.' );
+    if ( $tab ) $_GET['tab'] = $tab; // grouped pages read their active tab from here
+
+    ob_start();
+    call_user_func( $registry[ $page ] ); // no shell wrapper — JS replaces #swps-page-content's innards directly
+    $html = ob_get_clean();
+
+    wp_send_json_success( array( 'html' => $html, 'title' => get_admin_page_title() ) );
 }
 
 // ─── Enqueue admin assets ──────────────────────────────────────────────────────
@@ -288,7 +425,7 @@ function swps_sanitize_settings( $input ) {
         'geoip_mode','geoip_countries','maxmind_license_key',
         'wpscan_api_key','gsb_api_key',
         'away_start','away_end','away_timezone',
-        'login_allowed_ips',
+        'login_allowed_ips','github_token',
     );
     foreach ( $text_fields as $f ) {
         if ( isset($input[$f]) ) $clean[$f] = sanitize_text_field($input[$f]);
@@ -457,6 +594,66 @@ function swps_full_scan_page()      { include SWPS_PLUGIN_DIR . 'admin/page-full
 function swps_core_repair_page()    { include SWPS_PLUGIN_DIR . 'admin/page-core-repair.php'; }
 function swps_threat_intel_page()   { include SWPS_PLUGIN_DIR . 'admin/page-threat-intelligence.php'; }
 function swps_multisite_page()      { include SWPS_PLUGIN_DIR . 'admin/page-multisite.php'; }
+
+// ── Grouped tab pages (reorganized UI — see swps_render_group_tabs()) ──
+function swps_group_firewall_tabs() {
+    return array(
+        'waf'       => array( 'label' => 'Firewall (WAF)',   'file' => 'admin/page-waf.php' ),
+        'hardening' => array( 'label' => 'Hardening',        'file' => 'admin/page-hardening.php' ),
+        'headers'   => array( 'label' => 'Security Headers', 'file' => 'admin/page-headers.php' ),
+    );
+}
+function swps_group_firewall_page() {
+    swps_render_group_tabs( 'Firewall & Hardening', 'dashicons-shield-alt', swps_group_firewall_tabs(), 'swps-firewall' );
+}
+
+function swps_group_protection_tabs() {
+    return array(
+        'scanner'   => array( 'label' => 'Security Scanner', 'file' => 'admin/page-scanner.php' ),
+        'integrity' => array( 'label' => 'File Integrity',   'file' => 'admin/page-file-integrity.php' ),
+        'core'      => array( 'label' => 'Core Repair',      'file' => 'admin/page-core-repair.php' ),
+        'vuln'      => array( 'label' => 'Vuln Scanner',     'file' => 'admin/page-vuln-scanner.php' ),
+    );
+}
+function swps_group_protection_page() {
+    swps_render_group_tabs( 'File & Core Protection', 'dashicons-media-code', swps_group_protection_tabs(), 'swps-protection' );
+}
+
+function swps_group_access_tabs() {
+    return array(
+        '2fa'       => array( 'label' => 'Two-Factor Auth', 'file' => 'admin/page-two-factor.php' ),
+        'sessions'  => array( 'label' => 'Sessions',        'file' => 'admin/page-sessions.php' ),
+        'ipblocker' => array( 'label' => 'IP Blocker',      'file' => 'admin/page-ip-blocker.php' ),
+    );
+}
+function swps_group_access_page() {
+    swps_render_group_tabs( 'Access Control', 'dashicons-admin-users', swps_group_access_tabs(), 'swps-access' );
+}
+
+function swps_group_monitoring_tabs() {
+    return array(
+        'traffic'  => array( 'label' => 'Live Traffic',  'file' => 'admin/page-live-traffic.php' ),
+        'uptime'   => array( 'label' => 'Uptime Monitor', 'file' => 'admin/page-uptime-monitor.php' ),
+        'db'       => array( 'label' => 'DB Monitor',     'file' => 'admin/page-db-monitor.php' ),
+        'map'      => array( 'label' => 'Attack Map',     'file' => 'admin/page-attack-map.php' ),
+        'timeline' => array( 'label' => 'Timeline',       'file' => 'admin/page-security-timeline.php' ),
+        'activity' => array( 'label' => 'Activity Log',   'file' => 'admin/page-activity-log.php' ),
+        'audit'    => array( 'label' => 'Audit Trail',    'file' => 'admin/page-audit-trail.php' ),
+    );
+}
+function swps_group_monitoring_page() {
+    swps_render_group_tabs( 'Monitoring & Logs', 'dashicons-visibility', swps_group_monitoring_tabs(), 'swps-monitoring' );
+}
+
+function swps_group_settings_tabs() {
+    return array(
+        'general'  => array( 'label' => 'Settings', 'file' => 'admin/page-settings.php' ),
+        'advanced' => array( 'label' => 'Advanced', 'file' => 'admin/page-advanced-settings.php' ),
+    );
+}
+function swps_group_settings_page() {
+    swps_render_group_tabs( 'Settings', 'dashicons-admin-generic', swps_group_settings_tabs(), 'swps-settings' );
+}
 
 // DNA scan AJAX
 add_action('wp_ajax_swps_dna_scan', function() {

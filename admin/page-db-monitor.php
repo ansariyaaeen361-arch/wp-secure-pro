@@ -132,7 +132,7 @@ jQuery(document).ready(function($) {
             alert('Invalid prefix format. Use lowercase letters/numbers/underscores and end with underscore.');
             return;
         }
-        if (!confirm('Change table prefix to "' + newPrefix + '"?\n\nYou MUST update wp-config.php immediately after!')) return;
+        if (!confirm('Change table prefix to "' + newPrefix + '"?\n\nThis renames every table AND updates wp-config.php automatically in one step. Take a database backup first — this still touches every table in your database.')) return;
 
         var $btn = $(this).prop('disabled', true).text('Changing...');
         $.post(ajaxurl, { action: 'swps_db_change_prefix', nonce: swps_vars.nonce, new_prefix: newPrefix }, function(res) {

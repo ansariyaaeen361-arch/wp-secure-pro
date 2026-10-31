@@ -14,6 +14,7 @@
         <button class="swps-tab" data-tab="blacklist">Blacklist Monitor</button>
         <button class="swps-tab" data-tab="whitelabel">White Label</button>
         <button class="swps-tab" data-tab="export">Export / Import</button>
+        <button class="swps-tab" data-tab="updates">Updates</button>
     </div>
 
     <!-- CAPTCHA -->
@@ -338,6 +339,48 @@
             <button id="swps-reset-settings" class="button button-link-delete" style="margin-top:12px">Reset All Settings to Default</button>
         </div>
     </div>
+
+    <!-- Updates -->
+    <div class="swps-tab-content" id="tab-updates">
+        <div class="swps-card">
+            <h2>Plugin Updates (Self-Hosted via GitHub)</h2>
+            <p class="description">
+                This plugin checks a private GitHub repository for new releases and shows an
+                "Update available" notice on the normal Plugins page — same one-click update
+                as a WordPress.org plugin, just pointed at your own repo instead.
+                Repo: <code>github.com/<?php echo esc_html( SWPS_GitHub_Updater::GITHUB_USER ); ?>/<?php echo esc_html( SWPS_GitHub_Updater::GITHUB_REPO ); ?></code>
+                (private).
+            </p>
+            <form method="post" action="options.php">
+                <?php settings_fields('swps_settings_group'); ?>
+                <table class="form-table swps-form-table">
+                    <tr>
+                        <th>GitHub Access Token</th>
+                        <td>
+                            <input type="password" name="swps_settings[github_token]" value="<?php echo esc_attr($settings['github_token'] ?? ''); ?>" class="regular-text" autocomplete="off" placeholder="github_pat_...">
+                            <p class="description">
+                                A fine-grained token scoped to <strong>only this one repo</strong>,
+                                with <strong>Contents: Read-only</strong> permission — nothing else.
+                                Needed because the repo is private; this plugin never needs write
+                                access to it. Generate one at
+                                <a href="https://github.com/settings/personal-access-tokens/new" target="_blank">github.com/settings/personal-access-tokens/new</a>.
+                                Leave blank to fall back to a token baked into the plugin file (if any)
+                                or <code>SWPS_GITHUB_TOKEN</code> defined in wp-config.php.
+                            </p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>Check for Update Now</th>
+                        <td>
+                            <button type="button" id="swps-check-update-btn" class="button">Check Now</button>
+                            <span id="swps-check-update-result" style="margin-left:8px"></span>
+                        </td>
+                    </tr>
+                </table>
+                <?php submit_button('Save Update Settings'); ?>
+            </form>
+        </div>
+    </div>
 </div>
 
 <script>
@@ -381,6 +424,19 @@ jQuery(document).ready(function($) {
         $.post(ajaxurl, {action:'swps_reset_settings', nonce:swps_vars.nonce}, function(res) {
             if (res.success) { alert(res.data); location.reload(); }
             else alert('Error: ' + res.data);
+        });
+    });
+
+    // Check for update now
+    $('#swps-check-update-btn').on('click', function() {
+        var $btn = $(this).prop('disabled', true).text('Checking…');
+        var $result = $('#swps-check-update-result');
+        $.post(ajaxurl, { action: 'swps_check_github_update', nonce: swps_vars.nonce }, function(res) {
+            $btn.prop('disabled', false).text('Check Now');
+            $result.text(res.success ? res.data : ('Error: ' + res.data)).css('color', res.success ? '#16a34a' : '#dc2626');
+        }).fail(function() {
+            $btn.prop('disabled', false).text('Check Now');
+            $result.text('Request failed.').css('color', '#dc2626');
         });
     });
 

@@ -139,7 +139,12 @@ class SWPS_SIEM_Export {
         $file = $dir . date('Y-m-d') . '.ndjson';
         if (!file_exists($dir)) {
             wp_mkdir_p($dir);
-            file_put_contents($dir . '.htaccess', 'Deny from all');
+            // .htaccess access-control isn't honored on every host (confirmed
+            // on at least one OpenLiteSpeed setup) — an index.php that halts
+            // execution is a host-independent second layer for a directory
+            // that can contain IPs, usernames and event details.
+            file_put_contents($dir . '.htaccess', "Order Allow,Deny\nDeny from all\nRequire all denied\n");
+            file_put_contents($dir . 'index.php', "<?php\n// Silence is golden.\nexit;\n");
         }
         file_put_contents($file, $json . "\n", FILE_APPEND | LOCK_EX);
     }

@@ -142,7 +142,8 @@ jQuery(document).ready(function($) {
         $.post(ajaxurl, {action:'swps_fim_baseline', nonce:swps_vars.nonce}, function(res) {
             $btn.prop('disabled',false).text('Create New Baseline');
             if (res.success) { $('#swps-fim-result').html('<div class="swps-notice swps-notice-ok">'+res.data.message+'</div>'); setTimeout(()=>location.reload(),1500); }
-        });
+            else { $('#swps-fim-result').html('<div class="swps-notice swps-notice-error">'+(res.data||'Failed')+'</div>'); }
+        }).fail(function(){ $btn.prop('disabled',false).text('Create New Baseline'); $('#swps-fim-result').html('<div class="swps-notice swps-notice-error">Request failed (server/network error).</div>'); });
     });
     $('#swps-fim-toggle').on('change', function() {
         var en = this.checked ? 1 : 0;
@@ -157,29 +158,33 @@ jQuery(document).ready(function($) {
         $.post(ajaxurl, {action:'swps_fim_scan', nonce:swps_vars.nonce}, function(res) {
             $btn.prop('disabled',false).text('Scan Now');
             if (res.success) location.reload();
-        });
+            else { $('#swps-fim-result').html('<div class="swps-notice swps-notice-error">'+(res.data||'Scan failed')+'</div>'); }
+        }).fail(function(){ $btn.prop('disabled',false).text('Scan Now'); $('#swps-fim-result').html('<div class="swps-notice swps-notice-error">Request failed (server/network error).</div>'); });
     });
     $('.swps-quarantine-btn').on('click', function() {
         if (!confirm('Move this file to quarantine?')) return;
-        var file = $(this).data('file');
+        var $btn = $(this).prop('disabled', true).text('Quarantining...');
+        var file = $btn.data('file');
         $.post(ajaxurl, {action:'swps_quarantine_file', nonce:swps_vars.nonce, file:file}, function(res) {
             if (res.success) location.reload();
-            else alert('Error: ' + res.data);
-        });
+            else { alert('Error: ' + res.data); $btn.prop('disabled', false).text('Quarantine'); }
+        }).fail(function(){ alert('Request failed (server/network error).'); $btn.prop('disabled', false).text('Quarantine'); });
     });
     $('.swps-fim-ignore-btn').on('click', function() {
-        var file = $(this).data('file');
+        var $btn = $(this).prop('disabled', true);
+        var file = $btn.data('file');
         $.post(ajaxurl, {action:'swps_fim_ignore', nonce:swps_vars.nonce, file:file}, function(res) {
             if (res.success) location.reload();
-        });
+            else $btn.prop('disabled', false);
+        }).fail(function(){ $btn.prop('disabled', false); });
     });
     $('.swps-restore-btn').on('click', function() {
         if (!confirm('Restore this file from quarantine?')) return;
-        var $btn = $(this);
+        var $btn = $(this).prop('disabled', true).text('Restoring...');
         $.post(ajaxurl, {action:'swps_fim_restore', nonce:swps_vars.nonce, original_path:$btn.data('original'), quarantine_path:$btn.data('quarantine')}, function(res) {
             if (res.success) location.reload();
-            else alert('Restore failed: ' + res.data);
-        });
+            else { alert('Restore failed: ' + res.data); $btn.prop('disabled', false).text('Restore'); }
+        }).fail(function(){ alert('Request failed (server/network error).'); $btn.prop('disabled', false).text('Restore'); });
     });
 });
 </script>

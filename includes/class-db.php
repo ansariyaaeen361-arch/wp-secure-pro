@@ -152,7 +152,29 @@ class SWPS_DB {
         // (e.g. a stale Spamhaus false positive) so the new logic re-runs clean.
         delete_transient( 'swps_blacklist_status' );
         delete_option( 'swps_blacklist_last_check' );
+        self::purge_page_cache_plugins();
         update_option( 'swps_defaults_version', SWPS_VERSION );
+    }
+
+    /**
+     * Confirmed live (not theoretical): LiteSpeed Cache's JS/CSS optimizer
+     * doesn't know when this plugin's own admin JS/PHP has just been
+     * replaced by an update — an admin's browser can keep running the
+     * previous version's cached, pre-fix JavaScript (e.g. a "Fix" button
+     * missing an error handler from an older build) indefinitely after
+     * updating, with no visible sign anything is stale. Force a full purge
+     * once per plugin version so an update always actually takes effect.
+     */
+    private static function purge_page_cache_plugins() {
+        if ( has_action( 'litespeed_purge_all' ) ) {
+            do_action( 'litespeed_purge_all', 'SecureWP Shield updated to ' . SWPS_VERSION );
+        }
+        if ( class_exists( '\LiteSpeed\Purge' ) && method_exists( '\LiteSpeed\Purge', 'purge_all' ) ) {
+            \LiteSpeed\Purge::purge_all();
+        }
+        if ( function_exists( 'w3tc_flush_all' ) ) w3tc_flush_all();
+        if ( function_exists( 'wp_cache_clear_cache' ) ) wp_cache_clear_cache(); // WP Super Cache
+        if ( function_exists( 'rocket_clean_domain' ) ) rocket_clean_domain(); // WP Rocket
     }
 
     public static function deactivate() {

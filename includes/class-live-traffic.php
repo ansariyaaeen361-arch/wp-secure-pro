@@ -30,7 +30,8 @@ class SWPS_Live_Traffic {
         $method    = sanitize_text_field( $_SERVER['REQUEST_METHOD'] ?? 'GET' );
         $is_bot    = self::detect_bot( $ua );
         $is_logged = is_user_logged_in();
-        $country   = get_transient( SWPS_GeoIP::CACHE_KEY . md5($ip) ) ?: '';
+        // Actually resolve (not just read from cache) so the attack map has real data.
+        $country   = class_exists('SWPS_GeoIP') ? ( SWPS_GeoIP::get_country( $ip ) ?: '' ) : '';
 
         $entry = array(
             'time'      => time(),
@@ -43,6 +44,33 @@ class SWPS_Live_Traffic {
             'logged_in' => $is_logged,
             'country'   => $country,
             'status'    => http_response_code() ?: 200,
+        );
+
+        $log = get_transient( self::TRANSIENT_KEY ) ?: array();
+        array_unshift( $log, $entry );
+        if ( count($log) > self::MAX_ENTRIES ) $log = array_slice( $log, 0, self::MAX_ENTRIES );
+        set_transient( self::TRANSIENT_KEY, $log, HOUR_IN_SECONDS );
+    }
+
+    /**
+     * Records a confirmed attack/block event into the attack log, independent
+     * of the (performance-costly) full live_traffic_enabled toggle, so the
+     * Attack Map always has real data whenever something is actually blocked.
+     */
+    public static function log_attack( $ip, $reason = '' ) {
+        $country = class_exists('SWPS_GeoIP') ? ( SWPS_GeoIP::get_country( $ip ) ?: '' ) : '';
+
+        $entry = array(
+            'time'      => time(),
+            'ip'        => $ip,
+            'uri'       => substr( sanitize_text_field( $_SERVER['REQUEST_URI'] ?? $reason ), 0, 200 ),
+            'method'    => sanitize_text_field( $_SERVER['REQUEST_METHOD'] ?? 'GET' ),
+            'ua'        => substr( sanitize_text_field( $_SERVER['HTTP_USER_AGENT'] ?? $reason ), 0, 200 ),
+            'referer'   => '',
+            'bot'       => true,
+            'logged_in' => false,
+            'country'   => $country,
+            'status'    => 403,
         );
 
         $log = get_transient( self::TRANSIENT_KEY ) ?: array();

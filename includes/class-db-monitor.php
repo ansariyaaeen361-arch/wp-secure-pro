@@ -171,21 +171,49 @@ class SWPS_DB_Monitor {
         if ( is_wp_error($result) ) {
             wp_send_json_error( $result->get_error_message() );
         }
-        wp_send_json_success( 'Table prefix changed to: ' . $new_prefix . '. Update wp-config.php manually.' );
+        wp_send_json_success( 'Table prefix changed to: ' . $new_prefix . '. wp-config.php was updated automatically — the site is live on the new prefix.' );
     }
 
+    /**
+     * Fix: this used to rename every table and then tell the admin to go
+     * edit wp-config.php "immediately" by hand — between the RENAME and
+     * that manual edit the site is fully down (WordPress is still looking
+     * for wp_options etc. under the old name). One click bricked the site
+     * until someone got into a file manager/SSH. Now wp-config.php is
+     * rewritten as part of the same operation, and if that write fails for
+     * any reason, the table renames are rolled back so the site is never
+     * left in a half-migrated, broken state.
+     */
     private static function change_table_prefix( $new_prefix ) {
         global $wpdb;
         $old_prefix = $wpdb->prefix;
 
         if ( $new_prefix === $old_prefix ) return new WP_Error( 'same_prefix', 'New prefix is the same as current.' );
 
+        $config_file = self::locate_wp_config();
+        if ( ! $config_file || ! is_writable( $config_file ) ) {
+            return new WP_Error( 'config_not_writable', 'wp-config.php could not be found or is not writable — aborted before touching any tables, so the site is unaffected.' );
+        }
+        $config_contents = file_get_contents( $config_file );
+        if ( ! preg_match( '/\$table_prefix\s*=\s*([\'"])' . preg_quote( $old_prefix, '/' ) . '\1\s*;/', $config_contents ) ) {
+            return new WP_Error( 'config_pattern_not_found', 'Could not find the current $table_prefix line in wp-config.php in an editable format — aborted before touching any tables.' );
+        }
+
         $tables = $wpdb->get_col("SHOW TABLES LIKE '{$wpdb->esc_like($old_prefix)}%'");
         if ( empty($tables) ) return new WP_Error( 'no_tables', 'No tables found with current prefix.' );
 
+        $renamed = array();
         foreach ( $tables as $table ) {
             $new_table = $new_prefix . substr( $table, strlen($old_prefix) );
-            $wpdb->query( "RENAME TABLE `{$table}` TO `{$new_table}`" ); // phpcs:ignore
+            $ok = $wpdb->query( "RENAME TABLE `{$table}` TO `{$new_table}`" ); // phpcs:ignore
+            if ( $ok === false ) {
+                // Roll back every rename done so far, then bail.
+                foreach ( array_reverse( $renamed ) as $pair ) {
+                    $wpdb->query( "RENAME TABLE `{$pair[1]}` TO `{$pair[0]}`" ); // phpcs:ignore
+                }
+                return new WP_Error( 'rename_failed', "Renaming table `$table` failed — rolled back, no tables were changed." );
+            }
+            $renamed[] = array( $table, $new_table );
         }
 
         // Update user and usermeta option names
@@ -198,7 +226,41 @@ class SWPS_DB_Monitor {
             $old_prefix, $new_prefix, $wpdb->esc_like($old_prefix) . '%'
         ) );
 
-        SWPS_Activity_Log::add( 'db_prefix_changed', 'warning', "DB table prefix changed from $old_prefix to $new_prefix — update wp-config.php" );
+        // Now the critical part: update wp-config.php itself, in the same
+        // request, so the site never runs with mismatched tables/config.
+        $new_contents = preg_replace(
+            '/\$table_prefix\s*=\s*([\'"])' . preg_quote( $old_prefix, '/' ) . '\1\s*;/',
+            '$table_prefix = \'' . $new_prefix . '\';',
+            $config_contents,
+            1
+        );
+        $written = ( $new_contents !== $config_contents ) && file_put_contents( $config_file, $new_contents ) !== false;
+
+        if ( ! $written ) {
+            // Roll every table back rather than leave the site down.
+            foreach ( array_reverse( $renamed ) as $pair ) {
+                $wpdb->query( "RENAME TABLE `{$pair[1]}` TO `{$pair[0]}`" ); // phpcs:ignore
+            }
+            $wpdb->query( $wpdb->prepare(
+                "UPDATE `{$old_prefix}options` SET option_name = %s WHERE option_name = %s",
+                $old_prefix . 'user_roles', $new_prefix . 'user_roles'
+            ) );
+            $wpdb->query( $wpdb->prepare(
+                "UPDATE `{$old_prefix}usermeta` SET meta_key = REPLACE(meta_key, %s, %s) WHERE meta_key LIKE %s",
+                $new_prefix, $old_prefix, $wpdb->esc_like($new_prefix) . '%'
+            ) );
+            return new WP_Error( 'config_write_failed', 'Could not update wp-config.php — all table renames were rolled back, site is unaffected.' );
+        }
+
+        SWPS_Activity_Log::add( 'db_prefix_changed', 'warning', "DB table prefix changed from $old_prefix to $new_prefix — wp-config.php updated automatically" );
         return true;
+    }
+
+    /** wp-config.php lives one level above ABSPATH on a standard layout, but
+     *  WordPress also supports it living in ABSPATH itself. */
+    private static function locate_wp_config() {
+        if ( file_exists( ABSPATH . 'wp-config.php' ) ) return ABSPATH . 'wp-config.php';
+        if ( file_exists( dirname( ABSPATH ) . '/wp-config.php' ) ) return dirname( ABSPATH ) . '/wp-config.php';
+        return null;
     }
 }

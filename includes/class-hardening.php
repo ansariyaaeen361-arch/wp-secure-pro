@@ -23,6 +23,7 @@ class SWPS_Hardening {
         if ( ! empty( $h['comment_nofollow'] ) )      add_filter( 'pre_comment_approved', array( __CLASS__, 'check_comment_links' ), 10, 2 );
         if ( ! empty( $h['limit_login_page_access'] ) ) add_action( 'login_head', array( __CLASS__, 'restrict_login_ip' ) );
         if ( ! empty( $h['disable_directory_listing'] ) ) self::write_htaccess_no_listing();
+        if ( ! empty( $h['block_sensitive_files'] ) )  self::write_htaccess_block_sensitive_files();
     }
 
     public static function get_defaults() {
@@ -42,6 +43,7 @@ class SWPS_Hardening {
             'comment_nofollow'         => 0,
             'disable_directory_listing'=> 1,
             'limit_login_page_access'  => 0,
+            'block_sensitive_files'    => 1,
         );
     }
 
@@ -58,6 +60,12 @@ class SWPS_Hardening {
         if ( is_user_logged_in() ) return $result;
         // Allow specific safe endpoints
         $request = $_SERVER['REQUEST_URI'] ?? '';
+        // Fix: this blanket REST lockdown was also catching our OWN public,
+        // independently-authenticated routes (Threat Feed Server, Multisite
+        // Hub) — /wp-json/swps/v1/*, which enforce their own token checks —
+        // so turning on "Restrict REST API" silently broke those features
+        // with no indication why. Let our own namespace handle its own auth.
+        if ( strpos( $request, '/wp-json/swps/v1/' ) !== false ) return $result;
         $safe    = array( '/wp-json/wp/v2/posts', '/wp-json/wp/v2/pages', '/wp-json/wp/v2/categories' );
         foreach ( $safe as $ep ) {
             if ( strpos( $request, $ep ) !== false ) return $result;
@@ -130,6 +138,28 @@ class SWPS_Hardening {
         $htaccess = ABSPATH . '.htaccess';
         $marker   = 'SWPS No Directory Listing';
         $rules    = "Options -Indexes\n";
+        if ( ! function_exists( 'insert_with_markers' ) ) {
+            require_once ABSPATH . 'wp-admin/includes/misc.php';
+        }
+        insert_with_markers( $htaccess, $marker, $rules );
+    }
+
+    private static function write_htaccess_block_sensitive_files() {
+        $htaccess = ABSPATH . '.htaccess';
+        $marker   = 'SWPS Block Sensitive Files';
+        $rules    = "<FilesMatch \"\\.(log|bak|backup|old|orig|save|swp|sql|sql\\.gz|env|ini|cfg|conf|dist|dump)(\\..*)?$\">\n"
+                  . "    Order Allow,Deny\n"
+                  . "    Deny from all\n"
+                  . "    Require all denied\n"
+                  . "</FilesMatch>\n"
+                  . "<FilesMatch \"^(wp-config\\.php.*|error_log|debug\\.log)$\">\n"
+                  . "    Order Allow,Deny\n"
+                  . "    Deny from all\n"
+                  . "    Require all denied\n"
+                  . "</FilesMatch>\n";
+        if ( ! function_exists( 'insert_with_markers' ) ) {
+            require_once ABSPATH . 'wp-admin/includes/misc.php';
+        }
         insert_with_markers( $htaccess, $marker, $rules );
     }
 
@@ -137,13 +167,24 @@ class SWPS_Hardening {
 
     public static function apply_wp_config_hardening() {
         // Suggest wp-config.php changes (read-only advice)
-        return array(
+        $suggestions = array(
             "define('DISALLOW_FILE_EDIT', true);"    => 'Disable file editing in admin',
             "define('DISALLOW_FILE_MODS', true);"    => 'Disable plugin/theme install',
             "define('FORCE_SSL_ADMIN', true);"        => 'Force SSL for admin',
             "define('WP_DEBUG', false);"              => 'Disable debug mode (production)',
             "define('WP_AUTO_UPDATE_CORE', true);"    => 'Enable core auto-updates',
         );
+
+        // If debug logging is on and writing inside the webroot, suggest an
+        // absolute path outside it — a file outside ABSPATH has no URL at
+        // all, which is more reliable than relying on the host's .htaccess
+        // (confirmed to be ignored on at least one OpenLiteSpeed setup).
+        if ( defined('WP_DEBUG_LOG') && ( WP_DEBUG_LOG === true || ( is_string(WP_DEBUG_LOG) && strpos( WP_DEBUG_LOG, ABSPATH ) === 0 ) ) ) {
+            $outside = dirname( rtrim( ABSPATH, '/\\' ) ) . '/logs/debug.log';
+            $suggestions[ "define('WP_DEBUG_LOG', '$outside');" ] = 'Move debug log outside the webroot (currently publicly downloadable)';
+        }
+
+        return $suggestions;
     }
 
     public static function get_security_check_list() {
@@ -202,6 +243,16 @@ class SWPS_Hardening {
             'label'  => 'Admin username not "admin"',
             'status' => ! username_exists('admin'),
             'fix'    => 'Rename the "admin" user to something unique',
+        );
+        $checks[] = array(
+            'label'  => 'Sensitive files blocked (.log/.bak/.sql/config backups)',
+            'status' => ! empty($h['block_sensitive_files']),
+            'fix'    => 'Enable "Block Sensitive Files" in Hardening settings',
+        );
+        $checks[] = array(
+            'label'  => 'Debug log kept outside the webroot',
+            'status' => ! ( defined('WP_DEBUG_LOG') && ( WP_DEBUG_LOG === true || ( is_string(WP_DEBUG_LOG) && strpos( WP_DEBUG_LOG, ABSPATH ) === 0 ) ) ),
+            'fix'    => 'Set WP_DEBUG_LOG to an absolute path outside the webroot in wp-config.php',
         );
         return $checks;
     }

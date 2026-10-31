@@ -166,11 +166,34 @@
             <?php endif; ?>
 
             <h3 style="margin-top:16px">Subscribe to External Feed</h3>
-            <div style="display:flex;gap:8px;margin-bottom:8px">
+            <p class="description">Add a feed once and it's synced automatically every hour — no need to re-import manually.</p>
+            <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+                <input type="text" id="swps-feed-sub-name" placeholder="Name (optional)" class="regular-text">
                 <input type="url" id="swps-feed-subscribe-url" placeholder="https://otherfeed.com/wp-json/swps/v1/threat-feed" class="large-text">
-                <button id="swps-feed-subscribe" class="button">Import Feed</button>
+                <input type="text" id="swps-feed-sub-token" placeholder="Feed token (if protected)" class="regular-text">
+                <button id="swps-feed-subscribe" class="button button-primary">Add & Sync</button>
             </div>
             <div id="swps-feed-result"></div>
+
+            <table class="swps-table widefat striped" id="swps-feed-sub-table" style="margin-top:12px">
+                <thead><tr><th>Name</th><th>URL</th><th>Last Sync</th><th>IPs Imported</th><th>Status</th><th></th></tr></thead>
+                <tbody>
+                <?php $subs = SWPS_Threat_Feed_Server::get_subscriptions(); ?>
+                <?php if (empty($subs)): ?>
+                <tr><td colspan="6" style="text-align:center;padding:16px">No subscriptions yet.</td></tr>
+                <?php endif; ?>
+                <?php foreach ($subs as $s): ?>
+                <tr>
+                    <td><strong><?php echo esc_html($s['name']); ?></strong></td>
+                    <td><code style="font-size:11px"><?php echo esc_html($s['url']); ?></code></td>
+                    <td><?php echo $s['last_sync'] ? human_time_diff($s['last_sync']).' ago' : 'Never'; ?></td>
+                    <td><?php echo intval($s['last_count'] ?? 0); ?></td>
+                    <td><?php echo !empty($s['last_error']) ? '<span class="swps-badge swps-badge-critical">'.esc_html($s['last_error']).'</span>' : '<span class="swps-badge swps-badge-ok">OK</span>'; ?></td>
+                    <td><button class="button button-small button-link-delete swps-feed-sub-remove" data-id="<?php echo esc_attr($s['id']); ?>">Remove</button></td>
+                </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
         </div>
     </div>
 
@@ -253,12 +276,17 @@ jQuery(document).ready(function($){
     });
     $('#swps-feed-subscribe').on('click',function(){
         var url=$('#swps-feed-subscribe-url').val();if(!url)return;
-        var $btn=$(this).prop('disabled',true).text('Importing…');
-        $.post(ajaxurl,{action:'swps_feed_subscribe',nonce:swps_vars.nonce,feed_url:url},function(r){
-            $btn.prop('disabled',false).text('Import Feed');
-            var cls=r.success?'swps-notice-ok':'swps-notice-critical';
-            $('#swps-feed-result').html('<div class="swps-notice '+cls+'">'+(r.data||'Done')+'</div>');
+        var token=$('#swps-feed-sub-token').val(),name=$('#swps-feed-sub-name').val();
+        var $btn=$(this).prop('disabled',true).text('Adding…');
+        $.post(ajaxurl,{action:'swps_feed_add_sub',nonce:swps_vars.nonce,feed_url:url,feed_token:token,name:name},function(r){
+            $btn.prop('disabled',false).text('Add & Sync');
+            if(r.success){location.reload();}
+            else $('#swps-feed-result').html('<div class="swps-notice swps-notice-critical">'+(r.data||'Error')+'</div>');
         });
+    });
+    $(document).on('click','.swps-feed-sub-remove',function(){
+        if(!confirm('Remove this subscription?'))return;
+        $.post(ajaxurl,{action:'swps_feed_remove_sub',nonce:swps_vars.nonce,id:$(this).data('id')},function(r){if(r.success)location.reload();});
     });
 
     // SIEM test

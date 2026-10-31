@@ -14,8 +14,6 @@ class SWPS_Two_Factor {
         if ( empty( $settings['two_factor_enabled'] ) ) return;
 
         // Intercept login after credentials are verified
-        add_filter( 'authenticate',        array( __CLASS__, 'maybe_require_2fa' ), 50, 3 );
-        add_action( 'login_form',          array( __CLASS__, 'add_otp_field' ) );
         add_action( 'wp_login',            array( __CLASS__, 'check_2fa_on_login' ), 1, 2 );
 
         // User profile page
@@ -30,6 +28,22 @@ class SWPS_Two_Factor {
 
         // Custom login page for OTP entry
         add_action( 'login_init', array( __CLASS__, 'handle_otp_page' ) );
+
+        // Fix: 2FA only ever hooked into the cookie-based wp-login.php flow
+        // (via the 'wp_login' action). Application Passwords authenticate
+        // REST API requests through a completely separate path that never
+        // fires 'wp_login', so a stolen/planted Application Password gave
+        // full REST API access with zero 2FA — the exact mechanism behind
+        // this site's prior "auto-bootstrap" backdoor incident. Block
+        // Application Password auth outright for any user who has 2FA
+        // enabled, since a code-based 2FA challenge has no equivalent in a
+        // stateless, header-based auth scheme.
+        add_filter( 'wp_is_application_passwords_available_for_user', array( __CLASS__, 'block_app_passwords_for_2fa_users' ), 10, 2 );
+    }
+
+    public static function block_app_passwords_for_2fa_users( $available, $user ) {
+        if ( $user && self::is_enabled_for_user( $user->ID ) ) return false;
+        return $available;
     }
 
     /* ---------------------------------------------------------------
@@ -58,6 +72,32 @@ class SWPS_Two_Factor {
             ( ord( $hash[ $offset_byte + 3 ] ) & 0xFF )
         ) % 1000000;
         return str_pad( $code, 6, '0', STR_PAD_LEFT );
+    }
+
+    /* ---------------------------------------------------------------
+     * OTP brute-force guard — a 6-digit code is only ~1M combinations;
+     * without this, both email and TOTP codes could be guessed within
+     * their validity window via scripted attempts.
+     * -------------------------------------------------------------- */
+
+    const MAX_OTP_ATTEMPTS = 5;
+
+    private static function otp_attempts_key( $user_id ) {
+        return 'swps_otp_attempts_' . $user_id;
+    }
+
+    public static function otp_locked_out( $user_id ) {
+        return (int) get_transient( self::otp_attempts_key( $user_id ) ) >= self::MAX_OTP_ATTEMPTS;
+    }
+
+    private static function register_otp_failure( $user_id ) {
+        $key   = self::otp_attempts_key( $user_id );
+        $count = (int) get_transient( $key );
+        set_transient( $key, $count + 1, 5 * MINUTE_IN_SECONDS );
+    }
+
+    private static function clear_otp_attempts( $user_id ) {
+        delete_transient( self::otp_attempts_key( $user_id ) );
     }
 
     public static function verify_totp( $secret, $code ) {
@@ -159,6 +199,11 @@ class SWPS_Two_Factor {
         $method = get_user_meta( $user->ID, self::META_METHOD, true ) ?: 'email';
 
         if ( $otp ) {
+            if ( self::otp_locked_out( $user->ID ) ) {
+                SWPS_Activity_Log::add( '2fa_locked', 'critical', "2FA locked out (too many attempts): {$user->user_login}" );
+                wp_logout();
+                wp_die( 'Too many incorrect codes. Please wait 5 minutes and log in again.' );
+            }
             $valid = false;
             if ( $method === 'totp' ) {
                 $secret = get_user_meta( $user->ID, self::META_SECRET, true );
@@ -167,12 +212,14 @@ class SWPS_Two_Factor {
                 $valid = self::verify_email_otp( $user->ID, $otp );
             }
             if ( ! $valid ) {
+                self::register_otp_failure( $user->ID );
                 // Kill the session — force re-login
                 wp_logout();
                 wp_redirect( add_query_arg( array( 'swps_2fa' => '1', 'swps_otp_invalid' => '1', 'log' => $user_login ), wp_login_url() ) );
                 exit;
             }
             // OTP valid — log and allow
+            self::clear_otp_attempts( $user->ID );
             SWPS_Activity_Log::add( '2fa_success', 'info', "2FA verified for {$user->user_login} via $method" );
             return;
         }
@@ -203,6 +250,10 @@ class SWPS_Two_Factor {
         if ( isset( $_POST['swps_otp_submit'] ) ) {
             check_admin_referer( 'swps_2fa_verify' );
             $otp = sanitize_text_field( $_POST['swps_otp'] ?? '' );
+            if ( $user_id && self::otp_locked_out( $user_id ) ) {
+                SWPS_Activity_Log::add( '2fa_locked', 'critical', "2FA locked out (too many attempts): user #$user_id" );
+                wp_die( 'Too many incorrect codes. Please wait 5 minutes and log in again.' );
+            }
             if ( $user_id ) {
                 $valid = false;
                 if ( $method === 'totp' ) {
@@ -212,6 +263,7 @@ class SWPS_Two_Factor {
                     $valid = self::verify_email_otp( $user_id, $otp );
                 }
                 if ( $valid ) {
+                    self::clear_otp_attempts( $user_id );
                     delete_transient( 'swps_2fa_pending_' . sanitize_key( $user_login ) );
                     $user = get_user_by( 'ID', $user_id );
                     wp_set_auth_cookie( $user_id, true );
@@ -219,6 +271,7 @@ class SWPS_Two_Factor {
                     wp_redirect( admin_url() );
                     exit;
                 }
+                self::register_otp_failure( $user_id );
                 $invalid = true;
             }
         }

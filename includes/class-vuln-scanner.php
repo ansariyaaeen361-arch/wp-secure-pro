@@ -88,6 +88,9 @@ class SWPS_Vuln_Scanner {
     }
 
     private static function check_plugins( $api_key, $force ) {
+        if ( ! function_exists( 'get_plugins' ) ) {
+            require_once ABSPATH . 'wp-admin/includes/plugin.php';
+        }
         $plugins = get_plugins();
         $results = array();
 

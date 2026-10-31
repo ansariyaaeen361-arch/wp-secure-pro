@@ -490,7 +490,11 @@ $has_scan  = !empty($results);
 
 <script>
 (function($){
-    var STEPS = <?php echo wp_json_encode(array_keys($steps)); ?>;
+    var ALL_STEPS      = <?php echo wp_json_encode(array_keys($steps)); ?>;
+    var DISABLED_STEPS = <?php echo wp_json_encode(array_values((array)($settings['full_scan_disabled_steps'] ?? array()))); ?>;
+    // "Start Full Scan" runs every check the owner has left enabled in
+    // Scan Settings below — previously this ignored that setting entirely.
+    var STEPS = ALL_STEPS.filter(function(s){ return DISABLED_STEPS.indexOf(s) === -1; });
     var NONCE = '<?php echo wp_create_nonce('swps_nonce'); ?>';
     var scanning = false;
 
@@ -546,41 +550,68 @@ $has_scan  = !empty($results);
     // Fix single
     $(document).on('click', '.swps-fix-btn', function(){
         var btn=$(this), id=btn.data('id'), fix=btn.data('fix'), fd=btn.data('fix-data');
+        var resetBtn=function(){btn.prop('disabled',false).html('<span class="dashicons dashicons-admin-tools" style="font-size:12px;width:12px;height:12px"></span> Fix');};
         btn.prop('disabled',true).html('<span class="dashicons dashicons-update" style="font-size:12px;width:12px;height:12px"></span> Fixing...');
+        // Fix: a stale cached copy of this script (e.g. from an aggressive
+        // page-cache plugin not invalidating after an update), a dropped
+        // connection, or an expired nonce could all leave this button
+        // showing "Fixing..." forever with no error ever surfacing. A hard
+        // timeout guarantees the button always recovers either way.
+        var settled=false, timeoutId=setTimeout(function(){
+            if(settled)return; settled=true;
+            toast('Fix request timed out — if this keeps happening, clear your site cache and reload this page.','error');
+            resetBtn();
+        },15000);
         $.post(ajaxurl,{action:'swps_full_scan_fix',issue_id:id,fix_type:fix,fix_data:fd,nonce:NONCE},function(res){
-            if(res.success){toast(res.data.message||'Fixed!','success');btn.closest('.fs-issue').fadeOut(400);}
-            else{toast(res.data||'Fix failed','error');btn.prop('disabled',false).html('<span class="dashicons dashicons-admin-tools" style="font-size:12px;width:12px;height:12px"></span> Fix');}
+            if(settled)return; settled=true; clearTimeout(timeoutId);
+            if(res && res.success){toast((res.data&&res.data.message)||'Fixed!','success');btn.closest('.fs-issue').fadeOut(400);}
+            else{toast((res&&res.data)||'Fix failed','error');resetBtn();}
+        }).fail(function(){
+            if(settled)return; settled=true; clearTimeout(timeoutId);
+            toast('Fix request failed (server/network error)','error');
+            resetBtn();
         });
     });
 
     // Skip
     $(document).on('click', '.swps-skip-btn', function(){
         var btn=$(this), id=btn.data('id');
+        btn.prop('disabled',true);
         $.post(ajaxurl,{action:'swps_full_scan_skip',issue_id:id,nonce:NONCE},function(res){
             if(res.success){toast('Skipped','info');btn.closest('.fs-issue').fadeOut(400);}
-        });
+            else { toast(res.data||'Skip failed','error'); btn.prop('disabled',false); }
+        }).fail(function(){ toast('Skip request failed','error'); btn.prop('disabled',false); });
     });
 
     // Unskip
     $(document).on('click', '.swps-unskip-btn', function(){
-        $.post(ajaxurl,{action:'swps_full_scan_unskip',issue_id:$(this).data('id'),nonce:NONCE},function(res){
+        var btn=$(this);
+        btn.prop('disabled',true);
+        $.post(ajaxurl,{action:'swps_full_scan_unskip',issue_id:btn.data('id'),nonce:NONCE},function(res){
             if(res.success){toast('Unskipped','info');location.reload();}
-        });
+            else { toast(res.data||'Failed','error'); btn.prop('disabled',false); }
+        }).fail(function(){ toast('Request failed','error'); btn.prop('disabled',false); });
     });
 
     // Whitelist
     $(document).on('click', '.swps-whitelist-btn', function(){
         if(!confirm('Permanently whitelist this issue? It will not appear in future scans.')) return;
-        $.post(ajaxurl,{action:'swps_full_scan_whitelist',issue_id:$(this).data('id'),wl_action:'add',nonce:NONCE},function(res){
+        var btn=$(this);
+        btn.prop('disabled',true);
+        $.post(ajaxurl,{action:'swps_full_scan_whitelist',issue_id:btn.data('id'),wl_action:'add',nonce:NONCE},function(res){
             if(res.success){toast('Whitelisted','info');location.reload();}
-        });
+            else { toast(res.data||'Failed','error'); btn.prop('disabled',false); }
+        }).fail(function(){ toast('Request failed','error'); btn.prop('disabled',false); });
     });
 
     // Un-whitelist
     $(document).on('click', '.swps-unwhitelist-btn', function(){
-        $.post(ajaxurl,{action:'swps_full_scan_whitelist',issue_id:$(this).data('id'),wl_action:'remove',nonce:NONCE},function(res){
+        var btn=$(this);
+        btn.prop('disabled',true);
+        $.post(ajaxurl,{action:'swps_full_scan_whitelist',issue_id:btn.data('id'),wl_action:'remove',nonce:NONCE},function(res){
             if(res.success){toast('Removed from whitelist','success');location.reload();}
-        });
+            else { toast(res.data||'Failed','error'); btn.prop('disabled',false); }
+        }).fail(function(){ toast('Request failed','error'); btn.prop('disabled',false); });
     });
 
     // Fix All
@@ -589,15 +620,39 @@ $has_scan  = !empty($results);
         log.innerHTML='<div style="color:#64748b"><span class="dashicons dashicons-update"></span> Running fixes...</div>';
         summ.textContent='';
         modal.style.display='flex';
+        // Fix: if the AJAX request itself never completes (dropped
+        // connection, stale cached JS, server hang) neither success nor
+        // fail ever fires, so .always() below never runs either and the
+        // modal is stuck on "Running fixes..." forever. A hard timeout
+        // guarantees the modal always recovers.
+        var timedOut=false, responded=false, timeoutId=setTimeout(function(){
+            if(responded)return; timedOut=true;
+            log.innerHTML='<div style="color:#dc2626">Request timed out. Nothing was changed — if this keeps happening, clear your site cache and reload this page.</div>';
+            summ.textContent='';
+        },20000);
         $.post(ajaxurl,{action:'swps_full_scan_fix_all',severity:severity,nonce:NONCE},function(res){
-            if(res.success){
+            responded=true; clearTimeout(timeoutId);
+            if(timedOut)return;
+            if(res && res.success){
                 var d=res.data;
                 log.innerHTML=(d.log||[]).map(function(l){return '<div>'+l+'</div>';}).join('');
-                summ.textContent='Fixed: '+d.fixed+' | Failed: '+d.failed;
+                summ.textContent='Fixed: '+d.fixed+' | Failed: '+d.failed+' — reloading...';
                 toast('Fix All done: '+d.fixed+' fixed','success');
             } else {
-                log.innerHTML='<div style="color:#dc2626">Error: '+(res.data||'Unknown')+'</div>';
+                log.innerHTML='<div style="color:#dc2626">Error: '+((res&&res.data)||'Unknown')+'</div>';
+                summ.textContent='';
             }
+        }).fail(function(){
+            responded=true; clearTimeout(timeoutId);
+            if(timedOut)return;
+            log.innerHTML='<div style="color:#dc2626">Request failed (server/network error). Nothing was changed — you can close this and try again.</div>';
+            summ.textContent='';
+        }).always(function(){
+            if(timedOut)return; // already showed a timeout message — don't also force-reload
+            // Always refresh the underlying issue list so fixed items disappear
+            // without requiring a manual "Clear" — this used to only happen
+            // if the user clicked "Reload Page" in the modal themselves.
+            setTimeout(function(){ location.reload(); }, 1800);
         });
     }
     var bfc=document.getElementById('btn-fix-all-critical');
@@ -609,7 +664,9 @@ $has_scan  = !empty($results);
     var bc=document.getElementById('btn-clear-scan');
     if(bc) bc.addEventListener('click',function(){
         if(!confirm('Clear all scan results?')) return;
-        $.post(ajaxurl,{action:'swps_full_scan_clear',nonce:NONCE},function(res){ if(res.success) location.reload(); });
+        bc.disabled=true;
+        $.post(ajaxurl,{action:'swps_full_scan_clear',nonce:NONCE},function(res){ if(res.success) location.reload(); else bc.disabled=false; })
+         .fail(function(){ toast('Clear request failed','error'); bc.disabled=false; });
     });
 
     // Export
@@ -630,6 +687,9 @@ $has_scan  = !empty($results);
         $.post(ajaxurl,{action:'swps_full_scan_email',nonce:NONCE},function(res){
             bem.disabled=false; bem.innerHTML='<span class="dashicons dashicons-email-alt" style="font-size:14px;width:14px;height:14px"></span> Email Report';
             res.success ? toast('Report emailed!','success') : toast(res.data||'Email failed','error');
+        }).fail(function(){
+            bem.disabled=false; bem.innerHTML='<span class="dashicons dashicons-email-alt" style="font-size:14px;width:14px;height:14px"></span> Email Report';
+            toast('Email request failed (server/network error)','error');
         });
     });
 

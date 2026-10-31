@@ -11,9 +11,15 @@ class SWPS_Away_Mode {
     }
 
     public static function check_access() {
-        // Only block wp-login and wp-admin
+        // Fix: this used to match 'wp-admin'/'wp-login' as a substring
+        // ANYWHERE in the URL, including /wp-admin/admin-ajax.php — which
+        // blocked every AJAX-dependent feature on the whole site during
+        // "away hours" (this plugin's own public AJAX actions among them:
+        // Fake Login's submit handler, 2FA email OTP resend, etc.), not just
+        // the actual admin area. Only lock the real admin entry points.
         $request = trim( parse_url( $_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH ), '/' );
-        $is_admin_url = ( strpos($request, 'wp-admin') !== false || strpos($request, 'wp-login') !== false );
+        if ( strpos( $request, 'admin-ajax.php' ) !== false ) return;
+        $is_admin_url = ( preg_match( '#(^|/)wp-admin(/|$)#', $request ) || preg_match( '#(^|/)wp-login\.php($|/)#', $request ) );
         if ( ! $is_admin_url ) return;
 
         // Already logged in admins are never locked out

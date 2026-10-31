@@ -47,6 +47,7 @@ jQuery(document).ready(function($) {
         var btn = $(this);
         if (!ip) return;
         if (!confirm('Block IP address: ' + ip + '?')) return;
+        btn.prop('disabled', true).text('Blocking...');
 
         $.post(swps_vars.url, {
             action: 'swps_block_ip',
@@ -57,20 +58,33 @@ jQuery(document).ready(function($) {
             if (response.success) {
                 btn.text('Blocked').css({background:'#c0392b',color:'#fff',cursor:'default'}).prop('disabled', true);
                 showToast('IP ' + ip + ' has been blocked.', 'success');
+            } else {
+                btn.prop('disabled', false).text('Block');
+                showToast((response.data && response.data.message) || 'Block failed.', 'error');
             }
+        }).fail(function() {
+            btn.prop('disabled', false).text('Block');
+            showToast('Request failed (server/network error).', 'error');
         });
     });
 
     // Clear log
     $('#swps-clear-log-btn').on('click', function() {
         if (!confirm('Clear all activity log entries? This cannot be undone.')) return;
+        var btn = $(this).prop('disabled', true);
         $.post(swps_vars.url, {
             action: 'swps_clear_log',
             nonce:  swps_vars.nonce
         }, function(response) {
             if (response.success) {
                 location.reload();
+            } else {
+                btn.prop('disabled', false);
+                showToast('Clear failed.', 'error');
             }
+        }).fail(function() {
+            btn.prop('disabled', false);
+            showToast('Request failed (server/network error).', 'error');
         });
     });
 
@@ -100,4 +114,82 @@ jQuery(document).ready(function($) {
 
     // CSS spin animation
     $('<style>@keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }</style>').appendTo('head');
+
+    // ── Full in-plugin navigation without page reloads ──
+    // Fix: both (a) switching a group's internal tab (Firewall & Hardening
+    // → WAF/Hardening/Headers, etc.) and (b) switching between the 9
+    // sidebar pages themselves used to be plain links, so every click did a
+    // full browser reload. Both are now intercepted the same way: fetch the
+    // target page's (and, for grouped pages, the target tab's) rendered
+    // HTML over admin-ajax and swap it into #swps-page-content. The plain
+    // <a href> is left in place as a real fallback (JS off, right-click-
+    // open-in-new-tab, bookmarking) and as the shareable/bookmarkable URL.
+    function swpsParsePageTab(href) {
+        try {
+            var u = new URL(href, window.location.origin);
+            return { page: u.searchParams.get('page') || '', tab: u.searchParams.get('tab') || '' };
+        } catch (e) { return { page: '', tab: '' }; }
+    }
+
+    function swpsNavigate($link, href) {
+        var pt = swpsParsePageTab(href);
+        if (!pt.page || pt.page.indexOf('swps-') !== 0) return false; // not one of our pages — let it navigate normally
+        var $content = $('#swps-page-content');
+        if (!$content.length) return false; // AJAX nav unavailable on this screen — fall back to a real navigation
+
+        $content.addClass('swps-gtab-loading');
+        $.post(swps_vars.url, { action: 'swps_load_page', nonce: swps_vars.nonce, page: pt.page, tab: pt.tab })
+            .done(function(res) {
+                if (res && res.success) {
+                    $content.html(res.data.html); // jQuery .html() re-executes any <script> tags inside
+                    if (history.pushState) history.pushState({}, res.data.title || '', href);
+                    if (res.data.title) document.title = res.data.title;
+                    swpsUpdateSidebarHighlight(pt.page);
+                    $('html, body').animate({ scrollTop: 0 }, 150);
+                } else {
+                    window.location.href = href; // fall back to a real navigation
+                }
+            })
+            .fail(function() {
+                window.location.href = href; // network/server error — fall back to a real navigation
+            })
+            .always(function() {
+                $content.removeClass('swps-gtab-loading');
+            });
+        return true;
+    }
+
+    // In-page group tabs (data-tab is set directly by PHP, no need to parse it)
+    $(document).on('click', '.swps-gtab', function(e) {
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.which === 2) return; // open-in-new-tab etc.
+        if ($(this).hasClass('swps-gtab-active')) return;
+        if (swpsNavigate($(this), $(this).attr('href'))) e.preventDefault();
+    });
+
+    // WordPress's own left sidebar menu, scoped to our plugin's own entries
+    $(document).on('click', '#adminmenu a[href*="page=swps-"]', function(e) {
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.which === 2) return;
+        if (swpsNavigate($(this), $(this).attr('href'))) e.preventDefault();
+    });
+
+    // Keeps WP's own left-sidebar highlighting in sync after an AJAX nav —
+    // otherwise the PREVIOUS page stays visually marked "current" forever,
+    // since that highlighting is normally only computed on a full page load.
+    function swpsUpdateSidebarHighlight(page) {
+        var $menu = $('#adminmenu');
+        $menu.find('li.current, li.wp-has-current-submenu, li.wp-menu-open').removeClass('current wp-has-current-submenu wp-menu-open');
+        $menu.find('a.wp-has-current-submenu, a.current').removeClass('wp-has-current-submenu current');
+        var $top = $menu.find('> li').has('a[href*="page=swps-dashboard"]').first();
+        $top.addClass('wp-has-current-submenu wp-menu-open');
+        $top.find('> a').addClass('wp-has-current-submenu');
+        var $match = $menu.find('a[href*="page=' + page + '"]').first();
+        $match.closest('li').addClass('current');
+    }
+
+    // Back/forward after an AJAX nav pushed a new URL: simplest correct
+    // behavior is a real reload, since there's no client-side history stack
+    // of previously-fetched HTML to restore from.
+    window.addEventListener('popstate', function() {
+        window.location.reload();
+    });
 });

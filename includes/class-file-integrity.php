@@ -5,7 +5,30 @@ class SWPS_File_Integrity {
 
     const BASELINE_OPTION = 'swps_file_baseline';
     const LAST_SCAN_OPTION = 'swps_fim_last_scan';
-    const QUARANTINE_DIR   = WP_CONTENT_DIR . '/swps-quarantine/';
+    // Fallback location, used only if a webroot-external directory can't be created.
+    const QUARANTINE_DIR_FALLBACK = WP_CONTENT_DIR . '/swps-quarantine/';
+
+    /**
+     * Quarantined files are moved here. Preferred location is OUTSIDE the
+     * webroot (a sibling of ABSPATH) so quarantined malware/secrets have no
+     * URL at all — this doesn't depend on the host actually honoring
+     * .htaccess access-control directives (confirmed unreliable on at least
+     * one OpenLiteSpeed setup). Falls back to a protected wp-content
+     * subfolder only if the webroot-external path isn't writable.
+     */
+    public static function quarantine_dir() {
+        static $dir = null;
+        if ( $dir !== null ) return $dir;
+
+        $outside = dirname( rtrim( ABSPATH, '/\\' ) ) . '/swps-quarantine/';
+        if ( wp_mkdir_p( $outside ) && is_writable( $outside ) ) {
+            $dir = $outside;
+        } else {
+            $dir = self::QUARANTINE_DIR_FALLBACK;
+            if ( ! is_dir( $dir ) ) wp_mkdir_p( $dir );
+        }
+        return $dir;
+    }
 
     public static function init() {
         add_action( 'swps_hourly_check', array( __CLASS__, 'run_check' ) );
@@ -180,13 +203,18 @@ class SWPS_File_Integrity {
         $src  = ABSPATH . $rel_path;
         if ( ! file_exists($src) ) return false;
 
-        if ( ! is_dir( self::QUARANTINE_DIR ) ) wp_mkdir_p( self::QUARANTINE_DIR );
+        $qdir = self::quarantine_dir();
 
-        // Protect quarantine dir from web access
-        $htaccess = self::QUARANTINE_DIR . '.htaccess';
-        if ( ! file_exists($htaccess) ) file_put_contents( $htaccess, 'Deny from all' );
+        // Belt-and-braces web protection in case quarantine_dir() had to fall
+        // back to an in-webroot path — .htaccess rules aren't honored on
+        // every host (confirmed on at least one OpenLiteSpeed setup), so
+        // these are best-effort, not the primary protection.
+        $htaccess = $qdir . '.htaccess';
+        if ( ! file_exists($htaccess) ) file_put_contents( $htaccess, "Order Allow,Deny\nDeny from all\nRequire all denied\n" );
+        $index = $qdir . 'index.php';
+        if ( ! file_exists($index) ) file_put_contents( $index, "<?php\n// Silence is golden.\nexit;\n" );
 
-        $dest     = self::QUARANTINE_DIR . basename($rel_path) . '_' . time() . '.quarantine';
+        $dest     = $qdir . basename($rel_path) . '_' . time() . '_' . wp_generate_password(8, false) . '.quarantine';
         $moved    = rename( $src, $dest );
 
         if ( $moved ) {
@@ -205,7 +233,7 @@ class SWPS_File_Integrity {
         $quarantine_path = sanitize_text_field( $_POST['quarantine_path'] ?? '' );
         $original_path   = sanitize_text_field( $_POST['original_path'] ?? '' );
 
-        if ( strpos($quarantine_path, self::QUARANTINE_DIR) !== 0 ) {
+        if ( strpos($quarantine_path, self::quarantine_dir()) !== 0 ) {
             wp_send_json_error('Invalid path');
         }
 
@@ -289,6 +317,35 @@ class SWPS_File_Integrity {
         if ( strpos($rel, 'wp-admin/') === 0 || strpos($rel, 'wp-includes/') === 0 ) return 'critical';
         if ( in_array( $rel, array('wp-config.php','index.php','.htaccess') ) ) return 'critical';
         return 'warning';
+    }
+
+    /**
+     * Finds stray sensitive files (backups, dumps, logs, config saves) sitting
+     * directly in the webroot or wp-content root — these don't belong to any
+     * WordPress/plugin/theme file set and commonly leak credentials or secrets
+     * (e.g. wp-config.php.bak, debug.log) regardless of whether the host's
+     * .htaccess actually blocks direct access to them.
+     */
+    public static function scan_risky_files() {
+        $exts  = array('log','bak','backup','old','orig','save','swp','sql','env','ini','cfg','conf','dist','dump');
+        $found = array();
+
+        foreach ( array( ABSPATH, WP_CONTENT_DIR . '/' ) as $dir ) {
+            $items = @scandir( $dir );
+            if ( ! $items ) continue;
+            foreach ( $items as $item ) {
+                $path = $dir . $item;
+                if ( ! is_file( $path ) ) continue;
+                // Catch both "debug.log" and trailing-numbered backups like
+                // "wp-config.php.bak2" (strip trailing digits before matching).
+                $ext = strtolower( pathinfo( $item, PATHINFO_EXTENSION ) );
+                $ext = preg_replace( '/\d+$/', '', $ext );
+                if ( in_array( $ext, $exts, true ) ) {
+                    $found[] = self::rel( $path );
+                }
+            }
+        }
+        return array_values( array_unique( $found ) );
     }
 
     public static function get_quarantine_log() {

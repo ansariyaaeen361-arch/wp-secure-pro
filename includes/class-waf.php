@@ -5,7 +5,7 @@ class SWPS_WAF {
 
     // SQL Injection patterns
     private static $sqli = array(
-        '/(\%27)|(\')|(\-\-)|(\%23)|(#)/ix',
+        '/(\%27)|(\')|(\-\-)|(\%23)|(\#)/ix',
         '/((\%3D)|(=))[^\n]*((\%27)|(\')|(\-\-)|(\%3B)|(;))/ix',
         '/\w*((\%27)|(\'))((\%6F)|o|(\%4F))((\%72)|r|(\%52))/ix',
         '/((\%27)|(\'))union/ix',
@@ -79,6 +79,38 @@ class SWPS_WAF {
 
         // Run WAF at the earliest possible point
         add_action( 'init', array( __CLASS__, 'run' ), 1 );
+
+        // Scan every uploaded file's content before WordPress accepts it —
+        // runs for all users (including admins) since a malicious/compromised
+        // account uploading a webshell is exactly what this should catch.
+        add_filter( 'wp_handle_upload_prefilter', array( __CLASS__, 'check_upload' ) );
+    }
+
+    /**
+     * Rejects uploads whose content matches a known webshell/backdoor
+     * signature, and double-extension tricks (e.g. shell.php.jpg) that could
+     * let a disguised PHP file land in uploads on a misconfigured host.
+     */
+    public static function check_upload( $file ) {
+        if ( ! empty( $file['error'] ) || empty( $file['tmp_name'] ) ) return $file;
+
+        $name = strtolower( $file['name'] ?? '' );
+        if ( preg_match( '/\.(php\d?|phtml|pht|phar)\./', $name ) || preg_match( '/\.(php\d?|phtml|pht|phar)$/', $name ) ) {
+            $file['error'] = 'Upload rejected: executable file type is not allowed.';
+            return $file;
+        }
+
+        $content = @file_get_contents( $file['tmp_name'] );
+        if ( $content !== false && class_exists( 'SWPS_Scanner' ) ) {
+            $threats = SWPS_Scanner::scan_content( $content );
+            if ( ! empty( $threats ) ) {
+                $ip = class_exists('SWPS_Login_Protection') ? SWPS_Login_Protection::get_client_ip() : ( $_SERVER['REMOTE_ADDR'] ?? '' );
+                SWPS_Activity_Log::add( 'upload_blocked', 'critical', "Malicious upload blocked: {$file['name']} ($ip) — " . implode(', ', $threats) );
+                $file['error'] = 'Upload rejected: file content matched a known malicious signature.';
+            }
+        }
+
+        return $file;
     }
 
     public static function run() {
@@ -158,6 +190,10 @@ class SWPS_WAF {
             "WAF blocked: $reason | IP: $ip | URI: " . ( $_SERVER['REQUEST_URI'] ?? '' )
         );
 
+        if ( class_exists('SWPS_Live_Traffic') ) {
+            SWPS_Live_Traffic::log_attack( $ip, $reason );
+        }
+
         // Auto-block IP if same IP keeps attacking
         global $wpdb;
         $recent = (int) $wpdb->get_var( $wpdb->prepare(
@@ -166,8 +202,20 @@ class SWPS_WAF {
             $ip
         ) );
 
-        if ( $recent >= 5 ) {
+        $threshold = (int) ( $settings['waf_auto_block_threshold'] ?? 5 );
+        if ( $threshold < 1 ) $threshold = 5;
+
+        if ( $recent >= $threshold ) {
+            $already_blocked = SWPS_IP_Blocker::is_blocked( $ip );
             SWPS_IP_Blocker::block_ip( $ip, "Auto-blocked by WAF: $reason", 60 );
+            if ( ! $already_blocked ) {
+                SWPS_Notifications::get_instance()->send(
+                    'waf_auto_block',
+                    'SecureWP Shield: IP Auto-Blocked',
+                    "IP $ip was automatically blocked after $recent malicious requests in 10 minutes.\nLast reason: $reason",
+                    'critical'
+                );
+            }
         }
 
         if ( ! empty( $settings['waf_mode'] ) && $settings['waf_mode'] === 'learning' ) {

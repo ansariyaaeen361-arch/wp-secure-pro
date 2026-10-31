@@ -11,8 +11,15 @@ $recent_fails = SWPS_Login_Protection::get_recent_failed_logins(5);
 $recent_logs  = SWPS_Activity_Log::get_logs( array('limit' => 8) );
 $waf_stats    = class_exists('SWPS_WAF') ? SWPS_WAF::get_stats() : array('total'=>0,'by_type'=>array());
 
-// Overall security grade (reuse Full Scan scoring if available)
-if ( class_exists('SWPS_Full_Scan') ) {
+// Overall security grade (reuse Full Scan scoring if available).
+// Fix: calculate_score() deducts points only for issues in a STORED scan
+// result — on a brand-new install (or right after activation, before the
+// owner has ever clicked "Run Full Scan") that option is empty, so the
+// math produced a perfect, unearned "Grade A" with nothing actually having
+// been checked yet. Track whether a scan has ever actually completed and
+// show that honestly instead of a fake score.
+$has_ever_scanned = class_exists('SWPS_Full_Scan') && ! empty( get_option( SWPS_Full_Scan::RESULT_OPT, array() ) );
+if ( $has_ever_scanned ) {
     $sc    = SWPS_Full_Scan::calculate_score();
     $score = $sc['score']; $grade = $sc['grade']; $score_color = $sc['color'];
 } else {
@@ -69,6 +76,17 @@ $threat_count   = $last_scan ? count($last_scan['threats'] ?? array()) : 0;
     <!-- Hero: score + KPIs -->
     <div class="swps-dash-hero">
         <div class="swps-card swps-score-card" style="margin:0">
+            <?php if ( ! $has_ever_scanned ) : ?>
+            <div class="swps-score-circle" style="--score-color: #94a3b8">
+                <span class="swps-score-number" style="font-size:16px">—</span>
+                <span class="swps-score-label">Not scanned</span>
+            </div>
+            <div class="swps-score-info">
+                <h2>Security Score</h2>
+                <p>No score yet — this site hasn't been scanned. Run a Full Scan to see where it actually stands.</p>
+                <p class="swps-muted"><?php echo $active_features; ?> of <?php echo count($features); ?> core protections active</p>
+            </div>
+            <?php else : ?>
             <div class="swps-score-circle" style="--score-color: <?php echo $score_color; ?>">
                 <span class="swps-score-number"><?php echo $score; ?></span>
                 <span class="swps-score-label">Grade <?php echo $grade; ?></span>
@@ -78,6 +96,7 @@ $threat_count   = $last_scan ? count($last_scan['threats'] ?? array()) : 0;
                 <p><?php echo $score >= 80 ? 'Your site is well protected.' : ($score >= 50 ? 'A few things need your attention.' : 'Action needed — review critical items.'); ?></p>
                 <p class="swps-muted"><?php echo $active_features; ?> of <?php echo count($features); ?> core protections active</p>
             </div>
+            <?php endif; ?>
         </div>
 
         <div class="swps-stats-row" style="margin:0">

@@ -3,15 +3,42 @@ if ( ! defined('ABSPATH') ) exit;
 
 class SWPS_Threat_Feed_Server {
 
+    const SUBSCRIPTIONS_OPT = 'swps_feed_subscriptions';
+
     public static function init() {
         // Public feed endpoints (no auth required — read-only)
         add_action('rest_api_init', array(__CLASS__, 'register_endpoints'));
 
-        // Rebuild feed on daily cron
-        add_action('swps_daily_cron', array(__CLASS__, 'rebuild_feed'));
+        // Rebuild our own feed, and pull every subscribed feed, on cron —
+        // hourly so a newly-blocked IP on one site reaches the others
+        // within the hour instead of needing a manual "Import Feed" click.
+        add_action('swps_daily_cron',   array(__CLASS__, 'rebuild_feed'));
+        add_action('swps_hourly_check', array(__CLASS__, 'sync_subscriptions'));
 
-        add_action('wp_ajax_swps_feed_rebuild', array(__CLASS__, 'ajax_rebuild'));
-        add_action('wp_ajax_swps_feed_subscribe', array(__CLASS__, 'ajax_subscribe'));
+        // Auto-generate a feed token the moment the server is turned on, so
+        // "Enable Threat Feed" never accidentally means "publish our
+        // blocklist to the whole internet with no auth" by default.
+        add_action('update_option_swps_settings', array(__CLASS__, 'maybe_generate_token'), 10, 2);
+
+        // Fix: WP_REST_Response always gets JSON-encoded by the REST server
+        // regardless of a manually set Content-Type header, so the
+        // "plain-text, one IP per line" feed was actually being delivered as
+        // a single JSON-quoted string — unusable by fail2ban-style
+        // consumers (and by our own subscription sync, which parses by
+        // real newlines). Intercept just this one route and emit raw text.
+        add_filter('rest_pre_serve_request', array(__CLASS__, 'serve_raw_feed'), 10, 4);
+
+        add_action('wp_ajax_swps_feed_rebuild',       array(__CLASS__, 'ajax_rebuild'));
+        add_action('wp_ajax_swps_feed_subscribe',     array(__CLASS__, 'ajax_subscribe'));
+        add_action('wp_ajax_swps_feed_add_sub',       array(__CLASS__, 'ajax_add_subscription'));
+        add_action('wp_ajax_swps_feed_remove_sub',    array(__CLASS__, 'ajax_remove_subscription'));
+        add_action('wp_ajax_swps_feed_sync_sub_now',  array(__CLASS__, 'ajax_sync_now'));
+    }
+
+    public static function maybe_generate_token($old, $new) {
+        if (empty($new['threat_feed_server_enabled']) || !empty($new['threat_feed_token'])) return;
+        $new['threat_feed_token'] = wp_generate_password(32, false);
+        update_option('swps_settings', $new);
     }
 
     /* ── REST endpoints ── */
@@ -129,8 +156,29 @@ class SWPS_Threat_Feed_Server {
         }
     }
 
+    /**
+     * Prevents page-cache plugins (LiteSpeed Cache, etc.) from caching a
+     * live threat feed — confirmed on a real site that LiteSpeed Cache was
+     * serving this endpoint from a 7-day-old cached copy, so subscribers
+     * synced a stale blocklist and new IPs never propagated.
+     */
+    private static function no_cache_headers() {
+        if ( ! headers_sent() ) {
+            header( 'Cache-Control: no-store, no-cache, must-revalidate, max-age=0' );
+            header( 'X-LiteSpeed-Cache-Control: no-cache' );
+        }
+        // Response headers alone weren't enough — LiteSpeed Cache's plugin
+        // decides REST-route cacheability at its own layer and still cached
+        // this endpoint despite the headers above. Its documented API for
+        // "don't cache this response" is this action, not a header.
+        if ( has_action( 'litespeed_control_set_nocache' ) ) {
+            do_action( 'litespeed_control_set_nocache', 'SecureWP Shield: dynamic threat/hub data' );
+        }
+    }
+
     /* ── Serve plain-text feed (one IP per line) ── */
     public static function serve_feed($request) {
+        self::no_cache_headers();
         $settings = get_option('swps_settings', array());
         if (empty($settings['threat_feed_server_enabled'])) {
             return new WP_Error('disabled', 'Threat feed is disabled.', array('status' => 403));
@@ -159,14 +207,39 @@ class SWPS_Threat_Feed_Server {
             $lines[] = $entry['ip'];
         }
 
-        return new WP_REST_Response(implode("\n", $lines), 200, array('Content-Type' => 'text/plain; charset=utf-8'));
+        $response = new WP_REST_Response(implode("\n", $lines), 200);
+        $response->header('Content-Type', 'text/plain; charset=utf-8');
+        return $response;
+    }
+
+    /** Emits the plain-text feed route's body raw instead of JSON-encoded. */
+    public static function serve_raw_feed($served, $result, $request, $server) {
+        if ($request->get_route() !== '/swps/v1/threat-feed') return $served;
+        if (!($result instanceof WP_REST_Response) || $result->get_status() !== 200) return $served;
+        header('Content-Type: text/plain; charset=utf-8');
+        self::no_cache_headers();
+        echo $result->get_data();
+        return true;
     }
 
     /* ── Serve JSON feed ── */
     public static function serve_feed_json($request) {
+        self::no_cache_headers();
         $settings = get_option('swps_settings', array());
         if (empty($settings['threat_feed_server_enabled'])) {
             return new WP_Error('disabled', 'Threat feed is disabled.', array('status' => 403));
+        }
+
+        // Fix: this endpoint skipped the token check that serve_feed() (the
+        // plain-text variant) already enforces — an owner who set a token
+        // believing it protected "the threat feed" had the JSON copy of the
+        // same data left wide open.
+        $feed_token = $settings['threat_feed_token'] ?? '';
+        if ($feed_token) {
+            $req_token = $request->get_header('X-Feed-Token') ?: ($request->get_param('token') ?: '');
+            if (!hash_equals($feed_token, (string)$req_token)) {
+                return new WP_Error('auth', 'Invalid token.', array('status' => 401));
+            }
         }
 
         $feed = get_option('swps_threat_feed_cache', null);
@@ -176,6 +249,11 @@ class SWPS_Threat_Feed_Server {
     }
 
     public static function serve_feed_info() {
+        self::no_cache_headers();
+        $settings = get_option('swps_settings', array());
+        if (empty($settings['threat_feed_server_enabled'])) {
+            return new WP_Error('disabled', 'Threat feed is disabled.', array('status' => 403));
+        }
         $feed = get_option('swps_threat_feed_cache', array());
         return rest_ensure_response(array(
             'site_url'   => get_site_url(),
@@ -194,15 +272,100 @@ class SWPS_Threat_Feed_Server {
         wp_send_json_success(array('count' => $feed['count'], 'generated' => date('Y-m-d H:i:s', $feed['generated'])));
     }
 
+    /** One-shot import — kept for backward compatibility with the old UI. */
     public static function ajax_subscribe() {
         check_ajax_referer('swps_nonce', 'nonce');
         if (!current_user_can('manage_options')) wp_send_json_error('Unauthorized');
-        // Subscribe this site to an external feed
         $feed_url = esc_url_raw(trim($_POST['feed_url'] ?? ''));
+        $token    = sanitize_text_field($_POST['feed_token'] ?? '');
         if (!$feed_url) wp_send_json_error('Invalid feed URL.');
 
-        $resp = wp_remote_get($feed_url, array('timeout' => 15));
-        if (is_wp_error($resp)) wp_send_json_error($resp->get_error_message());
+        $result = self::fetch_and_import($feed_url, $token);
+        if (is_wp_error($result)) wp_send_json_error($result->get_error_message());
+        wp_send_json_success("Imported {$result} IPs from external feed.");
+    }
+
+    /* ── Persistent subscriptions — synced automatically every hour ── */
+
+    public static function get_subscriptions() {
+        return get_option(self::SUBSCRIPTIONS_OPT, array());
+    }
+
+    public static function ajax_add_subscription() {
+        check_ajax_referer('swps_nonce', 'nonce');
+        if (!current_user_can('manage_options')) wp_send_json_error('Unauthorized');
+
+        $url   = esc_url_raw(trim($_POST['feed_url'] ?? ''));
+        $token = sanitize_text_field($_POST['feed_token'] ?? '');
+        $name  = sanitize_text_field($_POST['name'] ?? '') ?: parse_url($url, PHP_URL_HOST);
+        if (!$url) wp_send_json_error('Invalid feed URL.');
+
+        $subs = self::get_subscriptions();
+        $id   = md5($url);
+        $subs[$id] = array(
+            'id' => $id, 'url' => $url, 'token' => $token, 'name' => $name,
+            'added' => time(), 'last_sync' => null, 'last_count' => 0, 'last_error' => '',
+        );
+        update_option(self::SUBSCRIPTIONS_OPT, $subs);
+
+        // Sync immediately so the owner sees a result without waiting an hour.
+        self::sync_one($subs[$id]);
+
+        wp_send_json_success(array('subscriptions' => self::get_subscriptions()));
+    }
+
+    public static function ajax_remove_subscription() {
+        check_ajax_referer('swps_nonce', 'nonce');
+        if (!current_user_can('manage_options')) wp_send_json_error('Unauthorized');
+        $id   = sanitize_text_field($_POST['id'] ?? '');
+        $subs = self::get_subscriptions();
+        unset($subs[$id]);
+        update_option(self::SUBSCRIPTIONS_OPT, $subs);
+        wp_send_json_success('Removed.');
+    }
+
+    public static function ajax_sync_now() {
+        check_ajax_referer('swps_nonce', 'nonce');
+        if (!current_user_can('manage_options')) wp_send_json_error('Unauthorized');
+        self::sync_subscriptions();
+        wp_send_json_success(array('subscriptions' => self::get_subscriptions()));
+    }
+
+    /** Hourly cron: pull every saved subscription and import new IPs. */
+    public static function sync_subscriptions() {
+        foreach (self::get_subscriptions() as $sub) {
+            self::sync_one($sub);
+        }
+    }
+
+    private static function sync_one($sub) {
+        $subs = self::get_subscriptions();
+        $id   = $sub['id'];
+        if (!isset($subs[$id])) return;
+
+        $result = self::fetch_and_import($sub['url'], $sub['token'] ?? '');
+        if (is_wp_error($result)) {
+            $subs[$id]['last_error'] = $result->get_error_message();
+        } else {
+            $subs[$id]['last_error']  = '';
+            $subs[$id]['last_count']  = $result;
+            $subs[$id]['last_sync']   = time();
+        }
+        update_option(self::SUBSCRIPTIONS_OPT, $subs);
+    }
+
+    /** Shared fetch+parse+block logic for both one-shot and scheduled imports. */
+    private static function fetch_and_import($feed_url, $token = '') {
+        $args = array('timeout' => 15);
+        if ($token) $args['headers'] = array('X-Feed-Token' => $token);
+
+        $resp = wp_remote_get($feed_url, $args);
+        if (is_wp_error($resp)) return $resp;
+
+        $code = wp_remote_retrieve_response_code($resp);
+        if ($code !== 200) {
+            return new WP_Error('feed_http_' . $code, "Feed returned HTTP $code" . ($code === 401 ? ' — check the feed token.' : '.'));
+        }
 
         $body  = wp_remote_retrieve_body($resp);
         $lines = array_filter(explode("\n", $body), fn($l) => trim($l) && $l[0] !== '#');
@@ -216,6 +379,6 @@ class SWPS_Threat_Feed_Server {
             }
         }
 
-        wp_send_json_success("Imported $count IPs from external feed.");
+        return $count;
     }
 }

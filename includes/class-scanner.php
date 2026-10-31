@@ -119,10 +119,18 @@ class SWPS_Scanner {
     }
 
     private static function scan_file( $file ) {
-        $threats = array();
         $content = @file_get_contents( $file );
-        if ( $content === false ) return $threats;
+        if ( $content === false ) return array();
+        return self::scan_content( $content );
+    }
 
+    /**
+     * Runs the same signature set used for scheduled scans against raw
+     * content. Exposed publicly so other modules (e.g. upload-time
+     * scanning) can reuse the same detection logic instead of duplicating it.
+     */
+    public static function scan_content( $content ) {
+        $threats = array();
         foreach ( self::$suspicious_patterns as $pattern => $label ) {
             if ( preg_match( '/' . $pattern . '/i', $content ) ) {
                 $threats[] = $label;

@@ -38,8 +38,21 @@ class SWPS_Multisite_Monitor {
         return !empty($secret) && hash_equals($secret, (string)$token);
     }
 
+    /** See SWPS_Threat_Feed_Server::no_cache_headers() — same page-cache
+     *  issue (confirmed with LiteSpeed Cache) applies to this hub data. */
+    private static function no_cache_headers() {
+        if ( ! headers_sent() ) {
+            header( 'Cache-Control: no-store, no-cache, must-revalidate, max-age=0' );
+            header( 'X-LiteSpeed-Cache-Control: no-cache' );
+        }
+        if ( has_action( 'litespeed_control_set_nocache' ) ) {
+            do_action( 'litespeed_control_set_nocache', 'SecureWP Shield: dynamic threat/hub data' );
+        }
+    }
+
     /* ── Receive status push from an agent site ── */
     public static function rest_receive_status($request) {
+        self::no_cache_headers();
         $data     = $request->get_json_params();
         $site_url = sanitize_url($data['site_url'] ?? '');
         if (!$site_url) return new WP_Error('invalid', 'Missing site_url', array('status' => 400));
@@ -68,6 +81,7 @@ class SWPS_Multisite_Monitor {
 
     /* ── GET: return hub summary for dashboards ── */
     public static function rest_get_status($request) {
+        self::no_cache_headers();
         $data = get_option(self::DATA_OPT, array());
         return rest_ensure_response(array('sites' => array_values($data), 'count' => count($data)));
     }

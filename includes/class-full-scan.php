@@ -44,6 +44,7 @@ class SWPS_Full_Scan {
             'users'       => array('label' => 'Suspicious Users',       'icon' => '👤', 'category' => 'access'),
             'headers'     => array('label' => 'Security Headers',       'icon' => '🛡️', 'category' => 'hardening'),
             'permissions' => array('label' => 'File Permissions',       'icon' => '🔑', 'category' => 'hardening'),
+            'risky_files' => array('label' => 'Exposed Backup/Log Files','icon' => '🗂️', 'category' => 'files'),
         );
     }
 
@@ -180,7 +181,13 @@ class SWPS_Full_Scan {
                 break;
 
             case 'vuln':
-                $result = get_option('swps_last_vuln_scan', array());
+                // Run an actual (cache-aware) scan instead of trusting a
+                // possibly-stale or never-populated cached option — otherwise
+                // a site that hasn't hit its daily cron yet always reports
+                // "Clean" without ever having scanned anything.
+                $result = class_exists('SWPS_Vuln_Scanner')
+                    ? SWPS_Vuln_Scanner::run_scan()
+                    : get_option('swps_last_vuln_scan', array());
 
                 // Flatten: WordPress core + each plugin + each theme.
                 $groups = array();
@@ -303,6 +310,20 @@ class SWPS_Full_Scan {
                         "Current: $actual — Recommended: $recommended",
                         'fix_permissions', 'Fix Now',
                         array('path' => $path, 'mode' => $recommended)
+                    );
+                }
+                break;
+
+            case 'risky_files':
+                foreach ( SWPS_File_Integrity::scan_risky_files() as $rel ) {
+                    $id = 'risky_' . md5($rel);
+                    if (in_array($id, $whitelist)) continue;
+                    $critical = (stripos($rel, 'wp-config') !== false || stripos($rel, 'debug.log') === 0 || stripos($rel, '/debug.log') !== false);
+                    $issues[] = self::make_issue($id, $critical ? 'critical' : 'warning',
+                        'Exposed file: ' . basename($rel),
+                        $rel . ' — not part of WordPress core/plugin/theme files and publicly downloadable over HTTP (may contain credentials, secrets, or server paths).',
+                        'quarantine_rel', 'Quarantine',
+                        array('file' => $rel)
                     );
                 }
                 break;

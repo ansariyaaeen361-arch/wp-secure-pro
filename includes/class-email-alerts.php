@@ -3,6 +3,23 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 
 class SWPS_Email_Alerts {
 
+    public static function init() {
+        // wp_mail() fails silently by default — if the server has no working
+        // mail transport (common on a bare VPS without SMTP configured), every
+        // alert below would simply vanish with no trace. Surface it instead.
+        add_action( 'wp_mail_failed', array( __CLASS__, 'on_mail_failed' ) );
+    }
+
+    public static function on_mail_failed( $wp_error ) {
+        if ( ! class_exists('SWPS_Activity_Log') ) return;
+        SWPS_Activity_Log::add(
+            'email_send_failed',
+            'warning',
+            'wp_mail() failed: ' . $wp_error->get_error_message() .
+            ' — check that your server/host has a working mail transport (SMTP).'
+        );
+    }
+
     public static function send_alert( $subject, $body ) {
         $settings = get_option( 'swps_settings', array() );
         if ( empty( $settings['email_alerts'] ) ) return;
