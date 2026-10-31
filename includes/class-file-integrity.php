@@ -105,9 +105,19 @@ class SWPS_File_Integrity {
         }
 
         // Re-hash current files under these prefixes (adds new ones too).
+        //
+        // Fix: a file that fires WordPress's own update hook is still not
+        // proof of safety by itself — a compromised build pipeline or a
+        // supply-chain-tampered release can ship through the exact same
+        // "legitimate update" channel (the real-world pattern behind the
+        // 3CX and xz-utils incidents researched for this). Any file in this
+        // batch that matches a malware signature is skipped here — it stays
+        // OUT of the trusted baseline and keeps showing as a flagged change
+        // on the next scan, even though the update event itself was real.
         foreach ( self::get_monitored_files() as $path ) {
             $rel = self::rel($path);
             if ( ! $matches_prefix($rel) || ! is_readable($path) ) continue;
+            if ( self::content_malware_hit( $path ) ) continue;
             $baseline[$rel] = array(
                 'hash'  => hash_file( 'sha256', $path ),
                 'size'  => filesize($path),
@@ -227,16 +237,31 @@ class SWPS_File_Integrity {
                 // confirmed live. 'info' severity (same tier already used
                 // for 'deleted' below) still surfaces it for review and
                 // quarantine without that scoring cliff.
-                $changes[] = array( 'file' => $rel, 'type' => 'added', 'severity' => 'info' );
+                //
+                // BUT: "low severity by default" must never mean "unscanned
+                // by default". A malware-signature hit always overrides this
+                // back to critical regardless of how innocent the surrounding
+                // context (batch size, a just-ran legitimate update, a
+                // version bump) looks — content is the one signal an
+                // attacker with file-write access can't also falsify just by
+                // riding along on a real update event. See is_fake_safe_add()
+                // for the reasoning behind every other signal in this file.
+                $malware = self::content_malware_hit( $path );
+                $entry = array( 'file' => $rel, 'type' => 'added', 'severity' => $malware ? 'critical' : 'info' );
+                if ( $malware ) $entry['malware_sig'] = $malware;
+                $changes[] = $entry;
             } elseif ( $hash !== $baseline[$rel]['hash'] ) {
-                $changes[] = array(
+                $malware = self::content_malware_hit( $path );
+                $entry = array(
                     'file'        => $rel,
                     'type'        => 'modified',
-                    'severity'    => self::get_severity($rel),
+                    'severity'    => $malware ? 'critical' : self::get_severity($rel),
                     'old_hash'    => $baseline[$rel]['hash'],
                     'new_hash'    => $hash,
                     'mtime'       => date_i18n( 'Y-m-d H:i:s', filemtime($path) ),
                 );
+                if ( $malware ) $entry['malware_sig'] = $malware;
+                $changes[] = $entry;
             }
         }
 
@@ -399,6 +424,20 @@ class SWPS_File_Integrity {
 
     private static function rel( $path ) {
         return ltrim( str_replace( ABSPATH, '', $path ), '/' );
+    }
+
+    /** Returns the highest-confidence malware signature match for a file's
+     *  CURRENT content, or null if clean / scanner unavailable. Reuses the
+     *  Malware DNA scanner so there's one signature list to maintain, not
+     *  two. Only PHP/JS-extension files are worth the cost here — the same
+     *  file types FIM already monitors. */
+    private static function content_malware_hit( $path ) {
+        if ( ! class_exists( 'SWPS_Malware_DNA' ) ) return null;
+        $findings = SWPS_Malware_DNA::scan_file( $path );
+        if ( empty( $findings ) ) return null;
+        // Prefer a 'critical'-severity DNA signature if one hit, else the first match.
+        foreach ( $findings as $f ) if ( ( $f['severity'] ?? '' ) === 'critical' ) return $f['sig_id'];
+        return $findings[0]['sig_id'] ?? null;
     }
 
     private static function get_severity( $rel ) {
