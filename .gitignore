@@ -1,0 +1,11 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+
+# Plugin runtime artifacts (never commit)
+*.swps_bak_*
+*.log
+geoip/*.mmdb
+
+# Build zips
+*.zip

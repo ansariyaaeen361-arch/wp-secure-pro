@@ -1,0 +1,358 @@
+<?php
+if ( ! defined( 'ABSPATH' ) ) exit;
+
+class SWPS_Two_Factor {
+
+    const META_SECRET   = '_swps_totp_secret';
+    const META_ENABLED  = '_swps_2fa_enabled';
+    const META_METHOD   = '_swps_2fa_method';    // 'email' or 'totp'
+    const META_BACKUP   = '_swps_2fa_backup';
+    const OTP_TRANSIENT = 'swps_email_otp_';
+
+    public static function init() {
+        $settings = get_option( 'swps_settings', array() );
+        if ( empty( $settings['two_factor_enabled'] ) ) return;
+
+        // Intercept login after credentials are verified
+        add_filter( 'authenticate',        array( __CLASS__, 'maybe_require_2fa' ), 50, 3 );
+        add_action( 'login_form',          array( __CLASS__, 'add_otp_field' ) );
+        add_action( 'wp_login',            array( __CLASS__, 'check_2fa_on_login' ), 1, 2 );
+
+        // User profile page
+        add_action( 'show_user_profile',   array( __CLASS__, 'profile_section' ) );
+        add_action( 'edit_user_profile',   array( __CLASS__, 'profile_section' ) );
+        add_action( 'personal_options_update',  array( __CLASS__, 'save_profile' ) );
+        add_action( 'edit_user_profile_update', array( __CLASS__, 'save_profile' ) );
+
+        // AJAX: send email OTP
+        add_action( 'wp_ajax_nopriv_swps_send_email_otp', array( __CLASS__, 'ajax_send_email_otp' ) );
+        add_action( 'wp_ajax_swps_send_email_otp',        array( __CLASS__, 'ajax_send_email_otp' ) );
+
+        // Custom login page for OTP entry
+        add_action( 'login_init', array( __CLASS__, 'handle_otp_page' ) );
+    }
+
+    /* ---------------------------------------------------------------
+     * TOTP (Google Authenticator) — RFC 6238 implementation
+     * -------------------------------------------------------------- */
+
+    public static function generate_secret( $length = 16 ) {
+        $chars  = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'; // Base32 chars
+        $secret = '';
+        for ( $i = 0; $i < $length; $i++ ) {
+            $secret .= $chars[ random_int( 0, 31 ) ];
+        }
+        return $secret;
+    }
+
+    public static function get_totp_code( $secret, $time_step = 30, $offset = 0 ) {
+        $time  = floor( time() / $time_step ) + $offset;
+        $key   = self::base32_decode( $secret );
+        $msg   = pack( 'N*', 0, $time );
+        $hash  = hash_hmac( 'sha1', $msg, $key, true );
+        $offset_byte = ord( $hash[19] ) & 0x0F;
+        $code  = (
+            ( ( ord( $hash[ $offset_byte ] ) & 0x7F ) << 24 ) |
+            ( ( ord( $hash[ $offset_byte + 1 ] ) & 0xFF ) << 16 ) |
+            ( ( ord( $hash[ $offset_byte + 2 ] ) & 0xFF ) << 8 ) |
+            ( ord( $hash[ $offset_byte + 3 ] ) & 0xFF )
+        ) % 1000000;
+        return str_pad( $code, 6, '0', STR_PAD_LEFT );
+    }
+
+    public static function verify_totp( $secret, $code ) {
+        $code = preg_replace('/\s+/', '', $code );
+        for ( $i = -1; $i <= 1; $i++ ) { // Allow 1 time-step drift
+            if ( hash_equals( self::get_totp_code( $secret, 30, $i ), $code ) ) return true;
+        }
+        return false;
+    }
+
+    private static function base32_decode( $secret ) {
+        $base32chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+        $secret = strtoupper( $secret );
+        $buffer = 0; $bitsLeft = 0; $output = '';
+        for ( $i = 0; $i < strlen( $secret ); $i++ ) {
+            $pos = strpos( $base32chars, $secret[ $i ] );
+            if ( $pos === false ) continue;
+            $buffer = ( $buffer << 5 ) | $pos;
+            $bitsLeft += 5;
+            if ( $bitsLeft >= 8 ) {
+                $bitsLeft -= 8;
+                $output .= chr( ( $buffer >> $bitsLeft ) & 0xFF );
+            }
+        }
+        return $output;
+    }
+
+    public static function get_totp_uri( $secret, $user ) {
+        $issuer = urlencode( get_bloginfo('name') );
+        $account = urlencode( $user->user_email );
+        return "otpauth://totp/{$issuer}:{$account}?secret={$secret}&issuer={$issuer}&digits=6&period=30";
+    }
+
+    /* ---------------------------------------------------------------
+     * Email OTP
+     * -------------------------------------------------------------- */
+
+    public static function send_email_otp( $user ) {
+        $code  = str_pad( random_int(0, 999999), 6, '0', STR_PAD_LEFT );
+        $key   = self::OTP_TRANSIENT . $user->ID;
+        set_transient( $key, wp_hash_password( $code ), 300 ); // 5 min expiry
+
+        $blog = get_bloginfo('name');
+        // Send the code ONLY to the user who is logging in. (Do not route it
+        // through the admin alert mailbox — that would leak the login OTP.)
+        $sent = wp_mail(
+            $user->user_email,
+            "[{$blog}] Your Login Code: $code",
+            "Your one-time login code is: $code\n\n" .
+            "This code expires in 5 minutes.\n" .
+            "If you did not attempt to log in, change your password immediately.\n\n" .
+            "Site: " . get_site_url()
+        );
+        return $sent;
+    }
+
+    public static function verify_email_otp( $user_id, $code ) {
+        $key   = self::OTP_TRANSIENT . $user_id;
+        $hash  = get_transient( $key );
+        if ( ! $hash ) return false;
+        if ( wp_check_password( trim( $code ), $hash ) ) {
+            delete_transient( $key );
+            return true;
+        }
+        return false;
+    }
+
+    public static function ajax_send_email_otp() {
+        // Fix: nonce verification — prevents unauthenticated CSRF-based mail bombing
+        check_ajax_referer( 'swps_2fa_resend', 'nonce' );
+
+        $user_login = sanitize_text_field( $_POST['user_login'] ?? '' );
+        $user       = get_user_by( 'login', $user_login ) ?: get_user_by( 'email', $user_login );
+
+        if ( $user && get_user_meta( $user->ID, self::META_ENABLED, true ) ) {
+            // Fix: per-user + per-IP rate limit (1 OTP email per 60 seconds)
+            $rl_key = 'swps_otp_rl_' . md5( $user->ID . '_' . ( $_SERVER['REMOTE_ADDR'] ?? '' ) );
+            if ( get_transient( $rl_key ) ) {
+                wp_send_json_error( 'Please wait before requesting another code.' );
+                return;
+            }
+            set_transient( $rl_key, 1, 60 );
+            self::send_email_otp( $user );
+        }
+
+        // Always return success for unknown users — don't reveal account existence
+        wp_send_json_success();
+    }
+
+    /* ---------------------------------------------------------------
+     * Login flow interception
+     * -------------------------------------------------------------- */
+
+    public static function check_2fa_on_login( $user_login, $user ) {
+        if ( ! get_user_meta( $user->ID, self::META_ENABLED, true ) ) return;
+
+        // OTP submitted with login form?
+        $otp    = sanitize_text_field( $_POST['swps_otp'] ?? '' );
+        $method = get_user_meta( $user->ID, self::META_METHOD, true ) ?: 'email';
+
+        if ( $otp ) {
+            $valid = false;
+            if ( $method === 'totp' ) {
+                $secret = get_user_meta( $user->ID, self::META_SECRET, true );
+                $valid  = self::verify_totp( $secret, $otp );
+            } else {
+                $valid = self::verify_email_otp( $user->ID, $otp );
+            }
+            if ( ! $valid ) {
+                // Kill the session — force re-login
+                wp_logout();
+                wp_redirect( add_query_arg( array( 'swps_2fa' => '1', 'swps_otp_invalid' => '1', 'log' => $user_login ), wp_login_url() ) );
+                exit;
+            }
+            // OTP valid — log and allow
+            SWPS_Activity_Log::add( '2fa_success', 'info', "2FA verified for {$user->user_login} via $method" );
+            return;
+        }
+
+        // No OTP submitted — send OTP email and redirect to OTP page
+        wp_logout();
+        if ( $method === 'email' ) {
+            self::send_email_otp( $user );
+        }
+        set_transient( 'swps_2fa_pending_' . sanitize_key( $user_login ), $user->ID, 300 );
+        wp_redirect( add_query_arg( array( 'swps_2fa' => '1', 'log' => urlencode( $user_login ) ), wp_login_url() ) );
+        exit;
+    }
+
+    public static function handle_otp_page() {
+        if ( empty( $_GET['swps_2fa'] ) ) return;
+
+        $user_login = sanitize_text_field( urldecode( $_GET['log'] ?? '' ) );
+        $method     = 'email';
+        $user_id    = get_transient( 'swps_2fa_pending_' . sanitize_key( $user_login ) );
+        if ( $user_id ) {
+            $method = get_user_meta( $user_id, self::META_METHOD, true ) ?: 'email';
+        }
+
+        $invalid = ! empty( $_GET['swps_otp_invalid'] );
+
+        // Handle OTP form submission on this page
+        if ( isset( $_POST['swps_otp_submit'] ) ) {
+            check_admin_referer( 'swps_2fa_verify' );
+            $otp = sanitize_text_field( $_POST['swps_otp'] ?? '' );
+            if ( $user_id ) {
+                $valid = false;
+                if ( $method === 'totp' ) {
+                    $secret = get_user_meta( $user_id, self::META_SECRET, true );
+                    $valid  = self::verify_totp( $secret, $otp );
+                } else {
+                    $valid = self::verify_email_otp( $user_id, $otp );
+                }
+                if ( $valid ) {
+                    delete_transient( 'swps_2fa_pending_' . sanitize_key( $user_login ) );
+                    $user = get_user_by( 'ID', $user_id );
+                    wp_set_auth_cookie( $user_id, true );
+                    SWPS_Activity_Log::add( '2fa_success', 'info', "2FA verified for {$user->user_login} via $method" );
+                    wp_redirect( admin_url() );
+                    exit;
+                }
+                $invalid = true;
+            }
+        }
+
+        // Render OTP entry page
+        login_header( 'Enter Verification Code' );
+        ?>
+        <style>
+        .swps-2fa-wrap { text-align:center; }
+        .swps-2fa-wrap .otp-icon { font-size:48px; margin-bottom:16px; }
+        .swps-2fa-wrap p { color:#555; margin-bottom:20px; }
+        #swps_otp { text-align:center; font-size:28px; letter-spacing:8px; width:180px; padding:10px; border:2px solid #1a56a8; border-radius:8px; }
+        .swps-resend { margin-top:12px; font-size:13px; }
+        .swps-resend a { cursor:pointer; color:#1a56a8; text-decoration:underline; }
+        .swps-2fa-error { background:#fde8e8; color:#c0392b; padding:10px; border-radius:6px; margin-bottom:16px; font-size:13px; }
+        </style>
+        <div class="swps-2fa-wrap">
+            <div class="otp-icon"><?php echo $method === 'totp' ? '📱' : '📧'; ?></div>
+            <?php if ( $invalid ) : ?>
+                <div class="swps-2fa-error">Invalid or expired code. Please try again.</div>
+            <?php endif; ?>
+            <p>
+                <?php if ( $method === 'totp' ) : ?>
+                    Enter the 6-digit code from your <strong>Google Authenticator</strong> app.
+                <?php else : ?>
+                    A verification code has been sent to your email address.<br>Enter it below to complete login.
+                <?php endif; ?>
+            </p>
+            <form method="post">
+                <?php wp_nonce_field( 'swps_2fa_verify' ); ?>
+                <input type="hidden" name="log" value="<?php echo esc_attr($user_login); ?>">
+                <p>
+                    <input type="text" name="swps_otp" id="swps_otp" maxlength="6" placeholder="000000" autocomplete="one-time-code" inputmode="numeric" autofocus required>
+                </p>
+                <p>
+                    <input type="submit" name="swps_otp_submit" value="Verify Code" class="button button-primary button-large">
+                </p>
+            </form>
+            <?php if ( $method === 'email' ) : ?>
+            <div class="swps-resend">
+                Didn't receive it? <a id="swps-resend-btn">Resend code</a>
+            </div>
+            <script>
+            document.getElementById('swps-resend-btn').addEventListener('click', function() {
+                this.textContent = 'Sending...';
+                var self = this;
+                fetch('<?php echo admin_url('admin-ajax.php'); ?>', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                    body: 'action=swps_send_email_otp&user_login=<?php echo urlencode($user_login); ?>&nonce=<?php echo esc_js( wp_create_nonce( 'swps_2fa_resend' ) ); ?>'
+                }).then(function() { self.textContent = 'Code sent!'; });
+            });
+            </script>
+            <?php endif; ?>
+        </div>
+        <?php
+        login_footer();
+        exit;
+    }
+
+    /* ---------------------------------------------------------------
+     * User profile section — enable/setup 2FA
+     * -------------------------------------------------------------- */
+
+    public static function profile_section( $user ) {
+        $enabled = get_user_meta( $user->ID, self::META_ENABLED, true );
+        $method  = get_user_meta( $user->ID, self::META_METHOD,  true ) ?: 'email';
+        $secret  = get_user_meta( $user->ID, self::META_SECRET,  true );
+        if ( ! $secret ) $secret = self::generate_secret();
+        ?>
+        <h2>Two-Factor Authentication (2FA) — SecureWP Shield</h2>
+        <table class="form-table">
+            <tr>
+                <th>Enable 2FA</th>
+                <td>
+                    <label>
+                        <input type="checkbox" name="swps_2fa_enabled" value="1" <?php checked($enabled, 1); ?>>
+                        Require a one-time code every time I log in
+                    </label>
+                </td>
+            </tr>
+            <tr>
+                <th>Method</th>
+                <td>
+                    <label><input type="radio" name="swps_2fa_method" value="email" <?php checked($method,'email'); ?>> 📧 Email OTP (code sent to your email)</label><br><br>
+                    <label><input type="radio" name="swps_2fa_method" value="totp"  <?php checked($method,'totp');  ?>> 📱 Google Authenticator / Authy (TOTP)</label>
+                </td>
+            </tr>
+            <tr id="swps-totp-row" style="<?php echo $method !== 'totp' ? 'display:none' : ''; ?>">
+                <th>Setup TOTP</th>
+                <td>
+                    <p>Scan this QR code in Google Authenticator or Authy:</p>
+                    <div id="swps-qr-code" style="margin:10px 0; width:200px; height:200px; background:#f0f0f0; display:flex; align-items:center; justify-content:center; font-size:12px; color:#555; border:1px solid #ddd; padding:10px; word-break:break-all;">
+                        <small>Secret Key:<br><strong><?php echo esc_html($secret); ?></strong><br><br>Enter manually in your app:<br>Account: <?php echo esc_html($user->user_email); ?><br>Key: <?php echo esc_html($secret); ?><br>Type: Time-based</small>
+                    </div>
+                    <input type="hidden" name="swps_totp_secret" value="<?php echo esc_attr($secret); ?>">
+                    <p><strong>Verify your TOTP code to confirm setup:</strong></p>
+                    <input type="text" name="swps_totp_verify" maxlength="6" placeholder="Enter 6-digit code" style="font-size:18px; letter-spacing:4px; width:160px; text-align:center;">
+                </td>
+            </tr>
+        </table>
+        <script>
+        document.querySelectorAll('[name="swps_2fa_method"]').forEach(function(r){
+            r.addEventListener('change',function(){
+                document.getElementById('swps-totp-row').style.display = this.value==='totp' ? '' : 'none';
+            });
+        });
+        </script>
+        <?php
+    }
+
+    public static function save_profile( $user_id ) {
+        if ( ! current_user_can( 'edit_user', $user_id ) ) return;
+
+        $enabled = isset( $_POST['swps_2fa_enabled'] ) ? 1 : 0;
+        $method  = in_array( $_POST['swps_2fa_method'] ?? '', array('email','totp') ) ? $_POST['swps_2fa_method'] : 'email';
+
+        update_user_meta( $user_id, self::META_ENABLED, $enabled );
+        update_user_meta( $user_id, self::META_METHOD,  $method );
+
+        if ( $method === 'totp' ) {
+            $secret = sanitize_text_field( $_POST['swps_totp_secret'] ?? '' );
+            $verify = sanitize_text_field( $_POST['swps_totp_verify'] ?? '' );
+            if ( $secret && $verify && self::verify_totp( $secret, $verify ) ) {
+                update_user_meta( $user_id, self::META_SECRET, $secret );
+            }
+        }
+
+        if ( $enabled ) {
+            SWPS_Activity_Log::add( '2fa_setup', 'info', "2FA enabled for user ID $user_id via $method" );
+        }
+    }
+
+    public static function is_enabled_for_user( $user_id ) {
+        return (bool) get_user_meta( $user_id, self::META_ENABLED, true );
+    }
+}
