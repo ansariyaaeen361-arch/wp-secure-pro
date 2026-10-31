@@ -25,6 +25,18 @@ class SWPS_GitHub_Updater {
         add_filter( 'upgrader_source_selection',             array( __CLASS__, 'fix_folder_name' ), 10, 4 );
         add_action( 'upgrader_process_complete',             array( __CLASS__, 'clear_cache' ), 10, 0 );
         add_action( 'wp_ajax_swps_check_github_update',      array( __CLASS__, 'ajax_check_now' ) );
+
+        // Fix: confirmed live — clicking "Check Again" on the WordPress
+        // Updates page only clears WP's own update_plugins transient; our
+        // separate 12-hour GitHub-release cache was untouched by that, so
+        // a real new release could sit invisible for up to 12 hours even
+        // after an explicit manual recheck. Clear ours too whenever the
+        // admin explicitly asks WP to force a fresh check.
+        add_action( 'load-update-core.php', array( __CLASS__, 'maybe_clear_cache_on_force_check' ) );
+    }
+
+    public static function maybe_clear_cache_on_force_check() {
+        if ( ! empty( $_GET['force-check'] ) ) self::clear_cache();
     }
 
     public static function ajax_check_now() {
