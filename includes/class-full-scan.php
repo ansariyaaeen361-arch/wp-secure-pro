@@ -63,14 +63,31 @@ class SWPS_Full_Scan {
         $weights = array(
             'critical' => 15,
             'warning'  => 5,
+            'info'     => 1,
         );
 
+        // Fix: deductions used to be unbounded per step, so any single scan
+        // step that happens to produce a lot of individually-minor findings
+        // (classically: a legitimate theme/plugin install adding 50-100+
+        // files, each only an 'info'-severity "new file" notice since the
+        // v5.0.18 severity fix) could still add up to tank the WHOLE site's
+        // grade to F on its own — confirmed live BEFORE that severity fix
+        // (90 added-file warnings at 5pts each = -450, floored to 0/F).
+        // Capping how much any one step can drag the score down means a
+        // single noisy-but-low-risk category can no longer dominate the
+        // overall grade; a site with real critical issues elsewhere still
+        // scores accordingly since those use their own, uncapped pool.
+        $step_cap = 25;
+
         foreach ($results as $step => $data) {
+            $step_deduction = 0;
             foreach ($data['issues'] ?? array() as $issue) {
                 if (in_array($issue['id'], $skipped))   continue;
                 if (in_array($issue['id'], $whitelist)) continue;
 
                 $weight = $weights[$issue['severity']] ?? 3;
+                if ($issue['severity'] !== 'critical' && $step_deduction >= $step_cap) continue; // capped — still listed as an issue, just stops costing score
+                $step_deduction += $weight;
                 $score -= $weight;
                 $deductions[] = array(
                     'issue'   => $issue['title'],

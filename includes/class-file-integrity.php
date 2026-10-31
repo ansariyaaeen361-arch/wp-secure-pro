@@ -217,7 +217,17 @@ class SWPS_File_Integrity {
             $hash = hash_file( 'sha256', $path );
 
             if ( ! isset($baseline[$rel]) ) {
-                $changes[] = array( 'file' => $rel, 'type' => 'added', 'severity' => 'warning' );
+                // Fix: a brand-new file is a DISCOVERY, not a confirmed
+                // problem — unlike a file whose CONTENT changed (which
+                // really can indicate tampering), a new file most often
+                // just means a theme/plugin was installed after the
+                // baseline was taken. This used to carry full 'warning'
+                // severity, so a single legitimate theme install (which can
+                // easily add 50-100+ files) tanked Full Scan's grade to F —
+                // confirmed live. 'info' severity (same tier already used
+                // for 'deleted' below) still surfaces it for review and
+                // quarantine without that scoring cliff.
+                $changes[] = array( 'file' => $rel, 'type' => 'added', 'severity' => 'info' );
             } elseif ( $hash !== $baseline[$rel]['hash'] ) {
                 $changes[] = array(
                     'file'        => $rel,
