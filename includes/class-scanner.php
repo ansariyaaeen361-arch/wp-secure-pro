@@ -143,19 +143,43 @@ class SWPS_Scanner {
         return get_option( 'swps_last_scan', null );
     }
 
+    /**
+     * Fix: this used to flag ANY core PHP file touched in the last 7 days
+     * as possible "tampering" — purely by modification time, with no check
+     * on whether its actual content changed. A routine WordPress core
+     * update (or clicking "Restore from WP.org" in Full Scan) touches
+     * hundreds of files' mtimes at once, so this fired as a false "56 core
+     * files modified — could indicate tampering" alarm after completely
+     * normal, expected activity — confirmed live. It now cross-checks
+     * against the File Integrity Monitor's content-hash baseline (the
+     * actual trustworthy signal for "did this file's content change") and
+     * only reports a file if BOTH are true: recently touched AND its hash
+     * no longer matches the trusted baseline. A file WP-core-updated to the
+     * exact official content it's supposed to have is not tampering.
+     */
     public static function check_core_files() {
         $suspicious = array();
+        $baseline   = get_option( 'swps_file_baseline', array() );
         $core_dirs  = array( ABSPATH . 'wp-admin', ABSPATH . 'wp-includes' );
         foreach ( $core_dirs as $dir ) {
             $it = new RecursiveIteratorIterator( new RecursiveDirectoryIterator( $dir, RecursiveDirectoryIterator::SKIP_DOTS ) );
             foreach ( $it as $file ) {
-                if ( $file->isFile() && strtolower($file->getExtension()) === 'php' ) {
-                    $rel = str_replace( ABSPATH, '', $file->getPathname() );
-                    // Flag any PHP file in core that was modified recently (last 7 days)
-                    if ( $file->getMTime() > strtotime('-7 days') ) {
-                        $suspicious[] = array( 'file' => $rel, 'modified' => date('Y-m-d H:i:s', $file->getMTime()) );
-                    }
+                if ( ! $file->isFile() || strtolower($file->getExtension()) !== 'php' ) continue;
+                if ( $file->getMTime() <= strtotime('-7 days') ) continue; // not recent — skip either way
+
+                $rel = str_replace( ABSPATH, '', $file->getPathname() );
+
+                if ( ! empty( $baseline ) ) {
+                    // We have a trusted baseline — only flag a real content
+                    // mismatch, not mere recency.
+                    if ( ! isset( $baseline[ $rel ] ) ) continue; // new file, not a "core file changed" case
+                    if ( ! is_readable( $file->getPathname() ) ) continue;
+                    if ( hash_file( 'sha256', $file->getPathname() ) === $baseline[ $rel ]['hash'] ) continue; // content unchanged — a legit update just refreshed the mtime
                 }
+                // No baseline yet: fall back to the old recency-only signal,
+                // since there's nothing better to compare against.
+
+                $suspicious[] = array( 'file' => $rel, 'modified' => date('Y-m-d H:i:s', $file->getMTime()) );
             }
         }
         return $suspicious;
