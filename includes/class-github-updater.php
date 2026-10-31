@@ -27,7 +27,7 @@ class SWPS_GitHub_Updater {
     // Yahan token daal do -> har release/site par khud chala jayega,
     // kisi site ke wp-config me manually daalne ki zaroorat NAHI.
     // (wp-config ka SWPS_GITHUB_TOKEN constant isko override kar sakta hai.)
-    const BAKED_TOKEN = '';
+    const BAKED_TOKEN = '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';
     /* ─────────────────────────────────────────────────────────────────── */
     /* ─────────────────────────────────────────────────────────────────── */
 
