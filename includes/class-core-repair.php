@@ -131,6 +131,35 @@ class SWPS_Core_Repair {
         return array('success' => true, 'message' => "Repaired: $rel_path");
     }
 
+    /** Restores every checksummed file under a given wp-includes/<library>/
+     *  prefix in one go — used for the consolidated "bundled library
+     *  incomplete" issue in Full Scan, so a 20+-file library doesn't need
+     *  20+ individual clicks. */
+    public static function repair_bundle($prefix) {
+        $prefix = ltrim(str_replace('..', '', $prefix), '/\\');
+        if (!$prefix) return array('success' => false, 'message' => 'No prefix given.');
+
+        $checksums = self::get_checksums();
+        if (!$checksums) return array('success' => false, 'message' => 'Could not fetch checksums from WordPress.org.');
+
+        $abspath = rtrim(ABSPATH, '/\\') . '/';
+        $fixed = 0; $failed = 0;
+        foreach ($checksums as $file => $hash) {
+            if (strpos($file, $prefix . '/') !== 0) continue;
+            $full_path = $abspath . $file;
+            if (file_exists($full_path) && md5_file($full_path) === $hash) continue; // already fine
+            $r = self::repair_file($file);
+            if (!empty($r['success'])) $fixed++; else $failed++;
+        }
+
+        if ($fixed === 0 && $failed === 0) return array('success' => true, 'message' => "No files under $prefix needed repair.");
+        SWPS_Audit_Trail::log('core_bundle_repaired', 'core', '', $prefix, "Restored $fixed file(s), $failed failed");
+        return array(
+            'success' => $failed === 0,
+            'message' => "$prefix: restored $fixed file(s)" . ($failed ? ", $failed failed (check file permissions)" : "."),
+        );
+    }
+
     /* ── Repair all modified/missing files at once ── */
     public static function repair_all() {
         $result = get_option('swps_core_verify_result', array());

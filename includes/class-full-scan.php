@@ -154,15 +154,51 @@ class SWPS_Full_Scan {
                         array('file' => $item['file'])
                     );
                 }
+                // Fix: WordPress core now bundles large third-party library
+                // directories under wp-includes/ (e.g. php-ai-client, added
+                // in recent WP releases — 146 files in its own right). When
+                // a whole such bundle is unreadable to PHP (a common cause
+                // on shared/managed hosts: open_basedir or a lean/custom
+                // core install that strips unused bundled libraries) this
+                // used to report 20-30+ separate "critical" issues — one
+                // per file — crashing the score to an alarming Grade F over
+                // what is very often a single host-level quirk, not file-by-
+                // file tampering. Missing files are now grouped by their
+                // wp-includes/<library>/ root; a library with several
+                // missing files becomes ONE issue (and a WARNING, not
+                // critical — a dormant bundled library being absent is a
+                // much lower real risk than a tampered load-bearing file),
+                // while an isolated missing file elsewhere stays critical,
+                // since that pattern really does suggest tampering/deletion.
+                $missing_groups = array();
                 foreach ($result['missing'] ?? array() as $file) {
-                    $id = 'core_miss_' . md5($file);
-                    if (in_array($id, $whitelist)) continue;
-                    $issues[] = self::make_issue($id, 'critical',
-                        'Core missing: ' . $file,
-                        'This WordPress core file does not exist.',
-                        'repair_core', 'Restore from WP.org',
-                        array('file' => $file)
-                    );
+                    $lib = null;
+                    if (preg_match('#^wp-includes/([^/]+)/#', $file, $m)) $lib = 'wp-includes/' . $m[1];
+                    $key = $lib ?: $file;
+                    $missing_groups[$key][] = $file;
+                }
+                foreach ($missing_groups as $key => $files) {
+                    if (count($files) >= 4 && strpos($key, '/') !== false) {
+                        $id = 'core_miss_lib_' . md5($key);
+                        if (in_array($id, $whitelist)) continue;
+                        $issues[] = self::make_issue($id, 'warning',
+                            'Bundled library incomplete: ' . $key . ' (' . count($files) . ' files)',
+                            'Several files under this WordPress-bundled library are unreadable or missing — often caused by a host restricting which files PHP can see (open_basedir), or a lean/custom core install, rather than tampering. Still worth restoring to be sure.',
+                            'repair_core_bundle', 'Restore all ' . count($files) . ' files',
+                            array('prefix' => $key)
+                        );
+                        continue;
+                    }
+                    foreach ($files as $file) {
+                        $id = 'core_miss_' . md5($file);
+                        if (in_array($id, $whitelist)) continue;
+                        $issues[] = self::make_issue($id, 'critical',
+                            'Core missing: ' . $file,
+                            'This WordPress core file does not exist.',
+                            'repair_core', 'Restore from WP.org',
+                            array('file' => $file)
+                        );
+                    }
                 }
                 break;
 
@@ -364,6 +400,9 @@ class SWPS_Full_Scan {
 
             case 'repair_core':
                 return SWPS_Core_Repair::repair_file($fix_data['file'] ?? '');
+
+            case 'repair_core_bundle':
+                return SWPS_Core_Repair::repair_bundle($fix_data['prefix'] ?? '');
 
             case 'update_plugin':
                 $slug = $fix_data['slug'] ?? '';
