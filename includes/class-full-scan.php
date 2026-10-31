@@ -224,10 +224,37 @@ class SWPS_Full_Scan {
                 foreach ($stats['changes'] ?? array() as $change) {
                     $id = 'fim_' . md5($change['file']);
                     if (in_array($id, $whitelist)) continue;
+
+                    // Fix: a MODIFIED (not new, not deleted) plugin/theme
+                    // file used to only offer "Quarantine" — moving it aside
+                    // fixes the infection but also breaks the plugin/theme
+                    // until someone manually reinstalls it. If the plugin or
+                    // theme is actually hosted on WordPress.org, we can
+                    // instead pull the official file for the exact installed
+                    // version and restore it in place — the same idea as
+                    // Core Repair, just extended past wp-admin/wp-includes.
+                    // Matches the research finding that this is exactly what
+                    // Wordfence/Sucuri/Solid do too, and exactly where they
+                    // ALSO stop: a premium/commercial plugin or theme has no
+                    // public official copy to restore from, so it still only
+                    // gets Quarantine — same honest limit as every
+                    // competitor, not a gap unique to us.
+                    $fix_type  = 'quarantine_rel';
+                    $fix_label = 'Quarantine';
+                    if ($change['type'] === 'modified') {
+                        if (preg_match('#^wp-content/plugins/([^/]+)/#', $change['file'], $m)
+                            && class_exists('SWPS_Plugin_Theme_Repair') && SWPS_Plugin_Theme_Repair::is_wporg_plugin($m[1])) {
+                            $fix_type = 'repair_plugin_file'; $fix_label = 'Repair from WP.org';
+                        } elseif (preg_match('#^wp-content/themes/([^/]+)/#', $change['file'], $m)
+                            && class_exists('SWPS_Plugin_Theme_Repair') && SWPS_Plugin_Theme_Repair::is_wporg_theme($m[1])) {
+                            $fix_type = 'repair_theme_file'; $fix_label = 'Repair from WP.org';
+                        }
+                    }
+
                     $issues[] = self::make_issue($id, $change['severity'],
                         strtoupper($change['type']) . ': ' . basename($change['file']),
                         $change['file'],
-                        'quarantine_rel', 'Quarantine',
+                        $fix_type, $fix_label,
                         array('file' => $change['file'])
                     );
                 }
@@ -420,6 +447,12 @@ class SWPS_Full_Scan {
 
             case 'repair_core_bundle':
                 return SWPS_Core_Repair::repair_bundle($fix_data['prefix'] ?? '');
+
+            case 'repair_plugin_file':
+                return SWPS_Plugin_Theme_Repair::repair_plugin_file($fix_data['file'] ?? '');
+
+            case 'repair_theme_file':
+                return SWPS_Plugin_Theme_Repair::repair_theme_file($fix_data['file'] ?? '');
 
             case 'update_plugin':
                 $slug = $fix_data['slug'] ?? '';

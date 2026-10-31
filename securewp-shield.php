@@ -3,7 +3,7 @@
  * Plugin Name: SecureWP Shield
  * Plugin URI:  https://yoursite.com
  * Description: Enterprise WordPress Security Suite — WAF, 2FA, Full Site Scan, Core Repair, Honeypot, Rate Limiter, Challenge Page, DNA Scanner, Canary Tokens, IP Reputation, SIEM, Multi-Site Monitor, Threat Feed Server
- * Version:     5.0.19
+ * Version:     5.0.20
  * Author:      Yaseen
  * Author URI:  https://yoursite.com
  * Text Domain: securewp-shield
@@ -12,7 +12,7 @@
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-define( 'SWPS_VERSION',     '5.0.19' );
+define( 'SWPS_VERSION',     '5.0.20' );
 define( 'SWPS_AUTHOR',      'Yaseen' );
 define( 'SWPS_PLUGIN_DIR',  plugin_dir_path( __FILE__ ) );
 define( 'SWPS_PLUGIN_URL',  plugin_dir_url( __FILE__ ) );
@@ -79,6 +79,7 @@ require_once SWPS_PLUGIN_DIR . 'includes/class-full-scan.php';
 
 // ─── Tier 5: Self-Healing & Auto-Response ─────────────────────────────────────
 require_once SWPS_PLUGIN_DIR . 'includes/class-core-repair.php';
+require_once SWPS_PLUGIN_DIR . 'includes/class-plugin-theme-repair.php';
 require_once SWPS_PLUGIN_DIR . 'includes/class-challenge-page.php';
 require_once SWPS_PLUGIN_DIR . 'includes/class-honeypot.php';
 require_once SWPS_PLUGIN_DIR . 'includes/class-rate-limiter.php';
@@ -185,6 +186,7 @@ function swps_init() {
 
     // Tier 5
     SWPS_Core_Repair::init();
+    SWPS_Plugin_Theme_Repair::init();
     SWPS_Challenge_Page::init();
     SWPS_Honeypot::init();
     SWPS_Rate_Limiter::init();
