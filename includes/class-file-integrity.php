@@ -37,6 +37,85 @@ class SWPS_File_Integrity {
         add_action( 'wp_ajax_swps_fim_scan',      array( __CLASS__, 'ajax_run_scan' ) );
         add_action( 'wp_ajax_swps_fim_restore',   array( __CLASS__, 'ajax_restore_file' ) );
         add_action( 'wp_ajax_swps_fim_ignore',    array( __CLASS__, 'ajax_ignore_file' ) );
+
+        // Fix: without this, a totally routine plugin/theme/core update makes
+        // every file it touches show up as a "changed" issue forever (the
+        // baseline never moves on its own), so Full Scan nags about the same
+        // legitimate update every single run until an admin manually
+        // Quarantines or Ignores each file. A per-file "accept" button was
+        // considered and rejected — it invites blind-clicking, since the UI
+        // has no diff view, which would make it easy to wave through an
+        // actual compromise along with routine noise. Auto-refreshing the
+        // baseline ONLY for files WordPress's own updater just touched
+        // avoids that: the "is this legitimate" judgment is made by
+        // WordPress's verified update mechanism, not a reflexive click, and
+        // anything NOT covered by a real update — the pattern that actually
+        // indicates tampering — still gets flagged as before.
+        add_action( 'upgrader_process_complete', array( __CLASS__, 'refresh_baseline_after_update' ), 10, 2 );
+    }
+
+    /** Re-hashes just the files belonging to whatever WordPress's own
+     *  updater just installed/updated, so that legitimate change stops
+     *  being reported without touching the baseline for anything else. */
+    public static function refresh_baseline_after_update( $upgrader_object, $hook_extra ) {
+        $type   = $hook_extra['type'] ?? '';
+        $prefixes = array();
+
+        if ( $type === 'plugin' ) {
+            $plugins = $hook_extra['plugins'] ?? ( isset($hook_extra['plugin']) ? array($hook_extra['plugin']) : array() );
+            foreach ( $plugins as $plugin_file ) {
+                $dir = dirname( $plugin_file );
+                if ( $dir && $dir !== '.' ) $prefixes[] = 'wp-content/plugins/' . $dir;
+            }
+        } elseif ( $type === 'theme' ) {
+            $themes = $hook_extra['themes'] ?? ( isset($hook_extra['theme']) ? array($hook_extra['theme']) : array() );
+            foreach ( $themes as $stylesheet ) {
+                $prefixes[] = 'wp-content/themes/' . $stylesheet;
+            }
+        } elseif ( $type === 'core' ) {
+            $prefixes[] = 'wp-admin';
+            $prefixes[] = 'wp-includes';
+            $prefixes[] = ''; // root *.php files
+        }
+
+        if ( empty($prefixes) ) return;
+        self::refresh_baseline_for_prefixes( $prefixes );
+        self::run_scan(); // reflect the clean state immediately rather than waiting for the next hourly check
+    }
+
+    /** Re-hashes every currently-monitored file under any of the given
+     *  relative path prefixes and updates just those entries in the
+     *  baseline, leaving everything else untouched. Also drops baseline
+     *  entries for files that were removed as part of the same update. */
+    private static function refresh_baseline_for_prefixes( $prefixes ) {
+        $baseline = get_option( self::BASELINE_OPTION, array() );
+        if ( empty($baseline) ) return; // no baseline yet — nothing to refresh
+
+        $matches_prefix = function( $rel ) use ( $prefixes ) {
+            foreach ( $prefixes as $p ) {
+                if ( $p === '' ) { if ( strpos($rel, '/') === false ) return true; continue; } // root *.php
+                if ( strpos( $rel, rtrim($p, '/') . '/' ) === 0 ) return true;
+            }
+            return false;
+        };
+
+        // Drop stale entries for files under these prefixes that no longer exist.
+        foreach ( $baseline as $rel => $data ) {
+            if ( $matches_prefix($rel) && ! file_exists( ABSPATH . $rel ) ) unset( $baseline[$rel] );
+        }
+
+        // Re-hash current files under these prefixes (adds new ones too).
+        foreach ( self::get_monitored_files() as $path ) {
+            $rel = self::rel($path);
+            if ( ! $matches_prefix($rel) || ! is_readable($path) ) continue;
+            $baseline[$rel] = array(
+                'hash'  => hash_file( 'sha256', $path ),
+                'size'  => filesize($path),
+                'mtime' => filemtime($path),
+            );
+        }
+
+        update_option( self::BASELINE_OPTION, $baseline );
     }
 
     /* ── Baseline ─────────────────────────────────────────────────────────── */
