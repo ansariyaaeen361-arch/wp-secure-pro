@@ -135,6 +135,18 @@ class SWPS_Two_Factor {
      * Email OTP
      * -------------------------------------------------------------- */
 
+    /** Shared per-user + per-IP cooldown (60s) in front of send_email_otp(),
+     *  used by both the login-triggered send and the explicit "Resend"
+     *  button so neither path can be used to mail-bomb an account's inbox.
+     *  Returns true if an email was actually (re)sent, false if throttled. */
+    public static function send_email_otp_rate_limited( $user ) {
+        $rl_key = 'swps_otp_rl_' . md5( $user->ID . '_' . ( $_SERVER['REMOTE_ADDR'] ?? '' ) );
+        if ( get_transient( $rl_key ) ) return false;
+        set_transient( $rl_key, 1, 60 );
+        self::send_email_otp( $user );
+        return true;
+    }
+
     public static function send_email_otp( $user ) {
         $code  = str_pad( random_int(0, 999999), 6, '0', STR_PAD_LEFT );
         $key   = self::OTP_TRANSIENT . $user->ID;
@@ -173,14 +185,10 @@ class SWPS_Two_Factor {
         $user       = get_user_by( 'login', $user_login ) ?: get_user_by( 'email', $user_login );
 
         if ( $user && get_user_meta( $user->ID, self::META_ENABLED, true ) ) {
-            // Fix: per-user + per-IP rate limit (1 OTP email per 60 seconds)
-            $rl_key = 'swps_otp_rl_' . md5( $user->ID . '_' . ( $_SERVER['REMOTE_ADDR'] ?? '' ) );
-            if ( get_transient( $rl_key ) ) {
+            if ( ! self::send_email_otp_rate_limited( $user ) ) {
                 wp_send_json_error( 'Please wait before requesting another code.' );
                 return;
             }
-            set_transient( $rl_key, 1, 60 );
-            self::send_email_otp( $user );
         }
 
         // Always return success for unknown users — don't reveal account existence
@@ -225,9 +233,19 @@ class SWPS_Two_Factor {
         }
 
         // No OTP submitted — send OTP email and redirect to OTP page
+        //
+        // Fix: this path (triggered on every successful password check, via
+        // 'wp_login' — BEFORE 2FA has actually been satisfied) had no rate
+        // limit at all, unlike the explicit "Resend code" AJAX handler.
+        // Confirmed live: an attacker who already has — or correctly
+        // guesses — the account's password can mail-bomb the victim's inbox
+        // with hundreds of OTP emails per minute just by resubmitting the
+        // login form in a loop, since each successful password check re-
+        // fires this handler and sent a fresh email with zero throttling.
+        // Reuses the exact same per-user+IP cooldown as the Resend button.
         wp_logout();
         if ( $method === 'email' ) {
-            self::send_email_otp( $user );
+            self::send_email_otp_rate_limited( $user );
         }
         set_transient( 'swps_2fa_pending_' . sanitize_key( $user_login ), $user->ID, 300 );
         wp_redirect( add_query_arg( array( 'swps_2fa' => '1', 'log' => urlencode( $user_login ) ), wp_login_url() ) );
