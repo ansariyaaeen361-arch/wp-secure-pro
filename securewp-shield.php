@@ -3,7 +3,7 @@
  * Plugin Name: SecureWP Shield
  * Plugin URI:  https://yoursite.com
  * Description: Enterprise WordPress Security Suite — WAF, 2FA, Full Site Scan, Core Repair, Honeypot, Rate Limiter, Challenge Page, DNA Scanner, Canary Tokens, IP Reputation, SIEM, Multi-Site Monitor, Threat Feed Server
- * Version:     5.0.8
+ * Version:     5.0.9
  * Author:      Yaseen
  * Author URI:  https://yoursite.com
  * Text Domain: securewp-shield
@@ -12,7 +12,7 @@
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-define( 'SWPS_VERSION',     '5.0.8' );
+define( 'SWPS_VERSION',     '5.0.9' );
 define( 'SWPS_AUTHOR',      'Yaseen' );
 define( 'SWPS_PLUGIN_DIR',  plugin_dir_path( __FILE__ ) );
 define( 'SWPS_PLUGIN_URL',  plugin_dir_url( __FILE__ ) );
@@ -216,6 +216,25 @@ function swps_suppress_foreign_admin_notices( $screen ) {
     remove_all_actions( 'admin_notices' );
     remove_all_actions( 'all_admin_notices' );
     remove_all_actions( 'network_admin_notices' );
+
+    // Fix: confirmed live (with LiteSpeed Cache) that a page-cache plugin can
+    // still end up caching a wp-admin screen — a site owner saving a setting
+    // here, then refreshing, saw their own save "undo itself" because the
+    // refresh served a cached copy of the page from BEFORE the save, not
+    // because the save actually failed. WordPress admin pages are normally
+    // excluded by well-behaved cache plugins, but this costs nothing to send
+    // ourselves and removes the dependency on every cache plugin getting
+    // that exclusion right.
+    swps_send_no_cache_headers();
+}
+
+function swps_send_no_cache_headers() {
+    if ( headers_sent() ) return;
+    nocache_headers(); // WordPress's own standard no-cache header set
+    header( 'X-LiteSpeed-Cache-Control: no-cache' );
+    if ( has_action( 'litespeed_control_set_nocache' ) ) {
+        do_action( 'litespeed_control_set_nocache', 'SecureWP Shield admin page' );
+    }
 }
 
 add_action( 'admin_menu', 'swps_admin_menu' );
