@@ -519,6 +519,19 @@ class SWPS_File_Integrity {
         $baseline_dirty = false;
         $auto_absorbed  = 0;
 
+        // A core update (new WordPress version) can legitimately ADD brand
+        // new files under wp-admin/ or wp-includes/ (e.g. a new bundled
+        // library) — these aren't tampering, they're bundled WordPress.org
+        // source. Checked against the official checksum list for the
+        // currently-running version: an exact md5 match there is as strong a
+        // "this is genuinely WordPress core" signal as the malware scan is
+        // for everything else, so it's allowed to silently absorb too.
+        // A core file that's MISSING from that list, or whose hash doesn't
+        // match it, stays fully visible — that combination (new file in
+        // wp-admin/wp-includes NOT part of the official distribution) is
+        // exactly what a planted core-level backdoor would look like.
+        $core_checksums = class_exists('SWPS_Core_Repair') ? SWPS_Core_Repair::get_checksums() : false;
+
         // Fix (explicit, repeated user request): a non-core file that
         // changed and did NOT match any malware signature is, overwhelmingly,
         // just a normal plugin/theme update — not something worth an
@@ -538,10 +551,15 @@ class SWPS_File_Integrity {
 
             $hash = hash_file( 'sha256', $path );
             $is_core = self::get_severity($rel) === 'critical';
+            // Core file whose hash matches the official checksum for the
+            // currently-running WordPress version — provably stock core,
+            // whether brand new (a core update bundling a new file) or
+            // changed back to match a just-updated version.
+            $is_official_core = $is_core && $core_checksums && isset( $core_checksums[$rel] ) && md5_file($path) === $core_checksums[$rel];
 
             if ( ! isset($baseline[$rel]) ) {
                 $malware = self::content_malware_hit( $path );
-                if ( ! $malware && ! $is_core ) {
+                if ( ! $malware && ( ! $is_core || $is_official_core ) ) {
                     $baseline[$rel] = array( 'hash' => $hash, 'size' => filesize($path), 'mtime' => filemtime($path) );
                     $baseline_dirty = true;
                     $auto_absorbed++;
@@ -552,7 +570,7 @@ class SWPS_File_Integrity {
                 $changes[] = $entry;
             } elseif ( $hash !== $baseline[$rel]['hash'] ) {
                 $malware = self::content_malware_hit( $path );
-                if ( ! $malware && ! $is_core ) {
+                if ( ! $malware && ( ! $is_core || $is_official_core ) ) {
                     $baseline[$rel] = array( 'hash' => $hash, 'size' => filesize($path), 'mtime' => filemtime($path) );
                     $baseline_dirty = true;
                     $auto_absorbed++;

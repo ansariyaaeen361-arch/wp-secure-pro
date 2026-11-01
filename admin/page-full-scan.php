@@ -507,6 +507,18 @@ $has_scan  = !empty($results);
     var NONCE = '<?php echo wp_create_nonce('swps_nonce'); ?>';
     var scanning = false;
 
+    // Fix: this whole <script> block re-runs every time the group-tab nav
+    // system reloads the Full Scan page via AJAX (the page content is
+    // swapped, but document never is) — every $(document).on(...) below
+    // would otherwise stack a duplicate handler on top of the ones from the
+    // previous visit, so a single click fires the toggle/handler N times
+    // (e.g. 3 bindings = toggle, open, close = looks like nothing happened,
+    // needing 2-3 more clicks to "catch" on an odd click). Namespacing every
+    // delegated handler under .swpsFullScan and unbinding that namespace
+    // first makes re-running this block idempotent regardless of how many
+    // times the tab was reloaded.
+    $(document).off('.swpsFullScan');
+
     // Toast
     function toast(msg, type) {
         var t = document.getElementById('swps-toast');
@@ -557,7 +569,7 @@ $has_scan  = !empty($results);
     }
 
     // Fix single
-    $(document).on('click', '.swps-fix-btn', function(){
+    $(document).on('click.swpsFullScan', '.swps-fix-btn', function(){
         var btn=$(this), id=btn.data('id'), fix=btn.data('fix'), fd=btn.data('fix-data');
         var resetBtn=function(){btn.prop('disabled',false).html('<span class="dashicons dashicons-admin-tools" style="font-size:12px;width:12px;height:12px"></span> Fix');};
         btn.prop('disabled',true).html('<span class="dashicons dashicons-update" style="font-size:12px;width:12px;height:12px"></span> Fixing...');
@@ -583,7 +595,7 @@ $has_scan  = !empty($results);
     });
 
     // Skip
-    $(document).on('click', '.swps-skip-btn', function(){
+    $(document).on('click.swpsFullScan', '.swps-skip-btn', function(){
         var btn=$(this), id=btn.data('id');
         btn.prop('disabled',true);
         $.post(ajaxurl,{action:'swps_full_scan_skip',issue_id:id,nonce:NONCE},function(res){
@@ -593,7 +605,7 @@ $has_scan  = !empty($results);
     });
 
     // Unskip
-    $(document).on('click', '.swps-unskip-btn', function(){
+    $(document).on('click.swpsFullScan', '.swps-unskip-btn', function(){
         var btn=$(this);
         btn.prop('disabled',true);
         $.post(ajaxurl,{action:'swps_full_scan_unskip',issue_id:btn.data('id'),nonce:NONCE},function(res){
@@ -603,7 +615,7 @@ $has_scan  = !empty($results);
     });
 
     // Whitelist
-    $(document).on('click', '.swps-whitelist-btn', function(){
+    $(document).on('click.swpsFullScan', '.swps-whitelist-btn', function(){
         if(!confirm('Permanently whitelist this issue? It will not appear in future scans.')) return;
         var btn=$(this);
         btn.prop('disabled',true);
@@ -626,7 +638,7 @@ $has_scan  = !empty($results);
     // WordPress.org copy actually exists to restore from — never a
     // disabled/greyed-out button, just absent when there's nothing to
     // verify against (same as the primary row action already does).
-    $(document).on('click', '.swps-expand-btn', function(){
+    $(document).on('click.swpsFullScan', '.swps-expand-btn', function(){
         var $btn = $(this), file = $btn.data('file');
         var $row = $btn.closest('.fs-issue');
         var $panel = $row.next('.swps-diff-panel');
@@ -661,7 +673,7 @@ $has_scan  = !empty($results);
             }
             cols += '<div style="flex:1;min-width:0;overflow:auto">'
                  + '<div style="position:sticky;top:0;background:#fef2f2;padding:6px 10px;font-size:11px;font-weight:700;color:#991b1b;border-bottom:1px solid #fecaca">'+(d.has_official?'AFTER (current, on your site)':'CURRENT (on your site)')+'</div>'
-                 + '<pre style="margin:0;padding:10px;font-size:11px;line-height:1.6;white-space:pre-wrap;word-break:break-word">'+escHtml(d.current)+'</pre></div>'
+                 + '<pre class="swps-current-pre" style="margin:0;padding:10px;font-size:11px;line-height:1.6;white-space:pre-wrap;word-break:break-word">'+escHtml(d.current)+'</pre></div>'
                  + '</div>';
 
             $panel.html(
@@ -672,6 +684,9 @@ $has_scan  = !empty($results);
                 + '</div>'
                 + '<div class="swps-deepscan-result" style="margin-top:10px"></div>'
             );
+            // Kept so the deep-scan handler can re-render this exact text with
+            // matched malware snippets highlighted, without a second request.
+            $panel.data('current-content', d.current);
         }).fail(function(){ $btn.prop('disabled',false); $panel.html('<div style="color:#dc2626;font-size:12px;padding:8px">Request failed.</div>'); });
     });
 
@@ -684,7 +699,7 @@ $has_scan  = !empty($results);
     // official copy exists (determine_fim_fix()) — it is never shown and
     // then disabled, it simply isn't rendered when there's nothing to
     // verify/restore against.
-    $(document).on('click', '.swps-deepscan-btn', function(){
+    $(document).on('click.swpsFullScan', '.swps-deepscan-btn', function(){
         var $btn = $(this), file = $btn.data('file');
         var $result = $btn.closest('.swps-diff-panel').find('.swps-deepscan-result');
         $btn.prop('disabled', true).html('<span class="dashicons dashicons-update" style="font-size:12px;width:12px;height:12px"></span> Scanning…');
@@ -695,8 +710,10 @@ $has_scan  = !empty($results);
             var color = d.score >= 80 ? '#16a34a' : (d.score >= 40 ? '#d97706' : '#dc2626');
             var findingsHtml = '';
             if (d.findings && d.findings.length) {
-                findingsHtml = '<ul style="margin:6px 0 0;padding-left:18px;font-size:11px;color:#991b1b">' +
-                    d.findings.map(function(f){ return '<li>'+escHtml(f.sig_id)+' ('+escHtml(f.severity)+')</li>'; }).join('') + '</ul>';
+                findingsHtml = '<ul style="margin:6px 0 0;padding-left:18px;font-size:11px;color:#991b1b;text-align:left">' +
+                    d.findings.map(function(f){
+                        return '<li>'+escHtml(f.sig_id)+' ('+escHtml(f.severity)+')'+(f.line ? ' — line '+f.line : '')+'</li>';
+                    }).join('') + '</ul>';
             }
             var fixHtml = '';
             if (d.fix_type && d.fix_type !== 'none') {
@@ -710,6 +727,24 @@ $has_scan  = !empty($results);
                 + findingsHtml + fixHtml
                 + '</div>'
             );
+
+            // Highlight every matched malware snippet directly in the
+            // CURRENT/AFTER code pane (yellow background) so the exact
+            // suspicious line jumps out visually instead of making the admin
+            // read the whole file looking for it.
+            var $panel = $btn.closest('.swps-diff-panel');
+            var raw = $panel.data('current-content');
+            if (raw && d.findings && d.findings.length) {
+                var escaped = escHtml(raw);
+                d.findings.forEach(function(f){
+                    if (!f.match) return;
+                    var escapedMatch = escHtml(f.match);
+                    if (escaped.indexOf(escapedMatch) === -1) return;
+                    var mark = '<mark style="background:#fef08a;color:#713f12;font-weight:700;border-radius:2px;padding:0 1px" title="'+escAttr(f.sig_id+' ('+f.severity+')')+'">'+escapedMatch+'</mark>';
+                    escaped = escaped.split(escapedMatch).join(mark);
+                });
+                $panel.find('.swps-current-pre').html(escaped);
+            }
         }).fail(function(){
             $btn.prop('disabled', false).html('<span class="dashicons dashicons-search" style="font-size:12px;width:12px;height:12px"></span> Scan This File Deeply');
             $result.html('<div style="color:#dc2626;font-size:12px">Request failed.</div>');
@@ -720,7 +755,7 @@ $has_scan  = !empty($results);
     // plugin/theme folder (covers FTP/manual updates that never fired
     // WordPress's own update hook). Still can't silently whitelist a file
     // that matches a malware signature — see class-file-integrity.php.
-    $(document).on('click', '.swps-trustupdate-btn', function(){
+    $(document).on('click.swpsFullScan', '.swps-trustupdate-btn', function(){
         var prefix = $(this).data('prefix'); if(!prefix) return;
         if (!confirm('Trust all changes under "'+prefix+'" as something YOU did (FTP/manual update)?\n\nFiles that still match a malware signature will stay flagged regardless.')) return;
         var $btn = $(this).prop('disabled',true).text('Trusting…');
@@ -731,7 +766,7 @@ $has_scan  = !empty($results);
     });
 
     // Un-whitelist
-    $(document).on('click', '.swps-unwhitelist-btn', function(){
+    $(document).on('click.swpsFullScan', '.swps-unwhitelist-btn', function(){
         var btn=$(this);
         btn.prop('disabled',true);
         $.post(ajaxurl,{action:'swps_full_scan_whitelist',issue_id:btn.data('id'),wl_action:'remove',nonce:NONCE},function(res){

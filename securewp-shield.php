@@ -3,7 +3,7 @@
  * Plugin Name: SecureWP Shield
  * Plugin URI:  https://yoursite.com
  * Description: Enterprise WordPress Security Suite — WAF, 2FA, Full Site Scan, Core Repair, Honeypot, Rate Limiter, Challenge Page, DNA Scanner, Canary Tokens, IP Reputation, SIEM, Multi-Site Monitor, Threat Feed Server
- * Version:     5.0.22
+ * Version:     5.0.23
  * Author:      Yaseen
  * Author URI:  https://yoursite.com
  * Text Domain: securewp-shield
@@ -12,7 +12,7 @@
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-define( 'SWPS_VERSION',     '5.0.22' );
+define( 'SWPS_VERSION',     '5.0.23' );
 define( 'SWPS_AUTHOR',      'Yaseen' );
 define( 'SWPS_PLUGIN_DIR',  plugin_dir_path( __FILE__ ) );
 define( 'SWPS_PLUGIN_URL',  plugin_dir_url( __FILE__ ) );
@@ -715,7 +715,7 @@ add_action('wp_ajax_swps_fim_deep_scan', function() {
     wp_send_json_success(array(
         'file'      => $rel,
         'score'     => $score,
-        'findings'  => array_map(fn($f) => array('sig_id'=>$f['sig_id'], 'severity'=>$f['severity'], 'match'=>$f['match']), $findings),
+        'findings'  => array_map(fn($f) => array('sig_id'=>$f['sig_id'], 'severity'=>$f['severity'], 'match'=>$f['match'], 'line'=>$f['line'] ?? null), $findings),
         'fix_type'  => $fix[0],
         'fix_label' => $fix[1],
     ));
