@@ -572,6 +572,20 @@ $has_scan  = !empty($results);
     $(document).on('click.swpsFullScan', '.swps-fix-btn', function(){
         var btn=$(this), id=btn.data('id'), fix=btn.data('fix'), fd=btn.data('fix-data');
         var resetBtn=function(){btn.prop('disabled',false).html('<span class="dashicons dashicons-admin-tools" style="font-size:12px;width:12px;height:12px"></span> Fix');};
+
+        // Quarantine REMOVES the file entirely — there's no official copy to
+        // restore from in this path (if there were, determine_fim_fix()
+        // would have offered Auto Fix instead), so anything that calls
+        // functions/classes defined in this file can break immediately
+        // after. Confirming here makes that trade-off explicit instead of
+        // the admin discovering it as a fatal error on the live site.
+        if (fix === 'quarantine' || fix === 'quarantine_rel') {
+            var isCritical = btn.closest('.fs-issue').find('.fs-badge-critical').length > 0;
+            var msg = isCritical
+                ? 'This file contains malware — it will be removed so it can no longer run. The plugin/theme it belongs to may stop working until you reinstall it fresh. Continue?'
+                : 'This will permanently remove the file. If you made this change yourself, click "I did this" instead. Continue?';
+            if (!confirm(msg)) return;
+        }
         btn.prop('disabled',true).html('<span class="dashicons dashicons-update" style="font-size:12px;width:12px;height:12px"></span> Fixing...');
         // Fix: a stale cached copy of this script (e.g. from an aggressive
         // page-cache plugin not invalidating after an update), a dropped

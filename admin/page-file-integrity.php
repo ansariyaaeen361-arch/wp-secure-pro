@@ -96,7 +96,7 @@
                 <td class="swps-muted"><?php echo esc_html($change['mtime'] ?? '—'); ?></td>
                 <td>
                     <?php if ($change['type'] !== 'deleted'): ?>
-                    <button class="button button-small swps-quarantine-btn" data-file="<?php echo esc_attr($change['file']); ?>">Quarantine</button>
+                    <button class="button button-small swps-quarantine-btn" data-file="<?php echo esc_attr($change['file']); ?>" data-severity="<?php echo esc_attr($change['severity']); ?>">Quarantine</button>
                     <?php endif; ?>
                     <button class="button button-small swps-fim-ignore-btn" data-file="<?php echo esc_attr($change['file']); ?>">Ignore</button>
                 </td>
@@ -196,7 +196,17 @@ jQuery(document).ready(function($) {
         }).fail(function(){ $btn.prop('disabled',false).text('Scan Now'); $('#swps-fim-result').html('<div class="swps-notice swps-notice-error">Request failed (server/network error).</div>'); });
     });
     $('.swps-quarantine-btn').on('click', function() {
-        if (!confirm('Move this file to quarantine?')) return;
+        // Quarantine physically removes the file — there's no "undo the bad
+        // part only", and this page doesn't try to restore an official
+        // version first. If other code (this plugin/theme, or a core file)
+        // calls a function or class defined only in this file, removing it
+        // can break that immediately. Worth saying out loud before it
+        // happens rather than after.
+        var isCritical = $(this).data('severity') === 'critical';
+        var msg = isCritical
+            ? 'This file contains malware — it will be removed so it can no longer run. The plugin/theme it belongs to may stop working until you reinstall it fresh. Continue?'
+            : 'This will permanently remove the file. If you made this change yourself, use "I did this" on the Full Scan page instead. Continue?';
+        if (!confirm(msg)) return;
         var $btn = $(this).prop('disabled', true).text('Quarantining...');
         var file = $btn.data('file');
         $.post(ajaxurl, {action:'swps_quarantine_file', nonce:swps_vars.nonce, file:file}, function(res) {
