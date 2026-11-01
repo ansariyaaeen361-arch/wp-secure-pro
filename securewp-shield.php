@@ -3,7 +3,7 @@
  * Plugin Name: SecureWP Shield
  * Plugin URI:  https://yoursite.com
  * Description: Enterprise WordPress Security Suite — WAF, 2FA, Full Site Scan, Core Repair, Honeypot, Rate Limiter, Challenge Page, DNA Scanner, Canary Tokens, IP Reputation, SIEM, Multi-Site Monitor, Threat Feed Server
- * Version:     5.0.20
+ * Version:     5.0.21
  * Author:      Yaseen
  * Author URI:  https://yoursite.com
  * Text Domain: securewp-shield
@@ -12,7 +12,7 @@
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-define( 'SWPS_VERSION',     '5.0.20' );
+define( 'SWPS_VERSION',     '5.0.21' );
 define( 'SWPS_AUTHOR',      'Yaseen' );
 define( 'SWPS_PLUGIN_DIR',  plugin_dir_path( __FILE__ ) );
 define( 'SWPS_PLUGIN_URL',  plugin_dir_url( __FILE__ ) );
@@ -681,4 +681,42 @@ add_action('wp_ajax_swps_dna_scan', function() {
     check_ajax_referer('swps_nonce', 'nonce');
     if (!current_user_can('manage_options')) wp_send_json_error('Unauthorized');
     wp_send_json_success(SWPS_Malware_DNA::run_scan());
+});
+
+/**
+ * Per-file "deep scan" for the Full Scan file-change panel — re-runs the
+ * full Malware DNA signature set against ONE specific file on demand (the
+ * whole set, not a lighter subset, regardless of the file's size up to the
+ * scanner's own 5MB cap) and returns a Trust Score, plus whether Auto Fix
+ * is available for it (same determine_fim_fix() logic the issue list
+ * itself uses, so the two can never show conflicting fix options).
+ */
+add_action('wp_ajax_swps_fim_deep_scan', function() {
+    check_ajax_referer('swps_nonce', 'nonce');
+    if (!current_user_can('manage_options')) wp_send_json_error('Unauthorized');
+
+    $rel = sanitize_text_field( wp_unslash( $_POST['file'] ?? '' ) );
+    $rel = ltrim( str_replace('..', '', $rel), '/\\' );
+    $full = ABSPATH . $rel;
+    if ( ! $rel || ! file_exists($full) ) wp_send_json_error('File not found.');
+
+    $findings = SWPS_Malware_DNA::scan_file($full);
+
+    $score = 100;
+    foreach ($findings as $f) {
+        $score -= ($f['severity'] ?? '') === 'critical' ? 40 : 10;
+    }
+    $score = max(0, $score);
+
+    $baseline    = get_option('swps_file_baseline', array());
+    $change_type = isset($baseline[$rel]) ? 'modified' : 'added'; // best-effort when not called from a known change record
+    $fix         = SWPS_Full_Scan::determine_fim_fix($rel, $change_type);
+
+    wp_send_json_success(array(
+        'file'      => $rel,
+        'score'     => $score,
+        'findings'  => array_map(fn($f) => array('sig_id'=>$f['sig_id'], 'severity'=>$f['severity'], 'match'=>$f['match']), $findings),
+        'fix_type'  => $fix[0],
+        'fix_label' => $fix[1],
+    ));
 });

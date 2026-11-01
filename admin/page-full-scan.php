@@ -604,6 +604,123 @@ $has_scan  = !empty($results);
         }).fail(function(){ toast('Request failed','error'); btn.prop('disabled',false); });
     });
 
+    // View diff — shows the current file content next to the official
+    // WordPress.org copy when one exists, so a flagged change can actually
+    // be judged instead of guessed at from a bare filename.
+    //
+    // Expand/collapse — clicking a changed-file row toggles an inline
+    // before/after panel directly under it (no modal popup). First expand
+    // fetches the diff; the panel also holds a "Scan This File Deeply"
+    // button that re-runs the full malware-signature set against just this
+    // file on demand and shows a Trust Score, with Auto Fix appearing
+    // alongside it ONLY when determine_fim_fix() confirms an official
+    // WordPress.org copy actually exists to restore from — never a
+    // disabled/greyed-out button, just absent when there's nothing to
+    // verify against (same as the primary row action already does).
+    $(document).on('click', '.swps-expand-btn', function(){
+        var $btn = $(this), file = $btn.data('file');
+        var $row = $btn.closest('.fs-issue');
+        var $panel = $row.next('.swps-diff-panel');
+
+        if ($panel.length) { // already loaded — just toggle
+            $panel.slideToggle(150);
+            $btn.find('.dashicons').toggleClass('dashicons-arrow-down-alt2 dashicons-arrow-up-alt2');
+            return;
+        }
+        if (!file) return;
+
+        $panel = $('<div class="swps-diff-panel" style="display:none;margin:-4px 0 10px;padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 8px 8px"></div>').insertAfter($row);
+        $panel.html('<div style="text-align:center;padding:14px;color:#64748b;font-size:12px">Loading…</div>');
+        $btn.prop('disabled', true);
+
+        $.post(ajaxurl,{action:'swps_fim_view_diff',nonce:NONCE,file:file},function(res){
+            $btn.prop('disabled', false);
+            $btn.find('.dashicons').removeClass('dashicons-arrow-down-alt2').addClass('dashicons-arrow-up-alt2');
+            if(!res || !res.success){ $panel.html('<div style="color:#dc2626;font-size:12px;padding:8px">'+((res&&res.data)||'Could not load this file.')+'</div>'); return; }
+            var d = res.data;
+            var noticeHtml = '';
+            if (d.has_malware) {
+                noticeHtml = '<div style="padding:8px 10px;margin-bottom:10px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;font-size:12px;color:#991b1b"><span class="dashicons dashicons-warning" style="font-size:13px;width:13px;height:13px"></span> This file matched a malware signature — treat it as suspicious regardless of how it got here.</div>';
+            } else if (!d.has_official) {
+                noticeHtml = '<div style="padding:8px 10px;margin-bottom:10px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;font-size:12px;color:#92400e">No official source to compare against (not a WordPress.org-hosted file) — showing current content only, no "before" version is stored.</div>';
+            }
+            var cols = '<div style="display:flex;gap:0;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;max-height:360px">';
+            if (d.has_official) {
+                cols += '<div style="flex:1;min-width:0;border-right:1px solid #e2e8f0;overflow:auto">'
+                     + '<div style="position:sticky;top:0;background:#f0fdf4;padding:6px 10px;font-size:11px;font-weight:700;color:#166534;border-bottom:1px solid #bbf7d0">BEFORE (official, WordPress.org)</div>'
+                     + '<pre style="margin:0;padding:10px;font-size:11px;line-height:1.6;white-space:pre-wrap;word-break:break-word">'+escHtml(d.official)+'</pre></div>';
+            }
+            cols += '<div style="flex:1;min-width:0;overflow:auto">'
+                 + '<div style="position:sticky;top:0;background:#fef2f2;padding:6px 10px;font-size:11px;font-weight:700;color:#991b1b;border-bottom:1px solid #fecaca">'+(d.has_official?'AFTER (current, on your site)':'CURRENT (on your site)')+'</div>'
+                 + '<pre style="margin:0;padding:10px;font-size:11px;line-height:1.6;white-space:pre-wrap;word-break:break-word">'+escHtml(d.current)+'</pre></div>'
+                 + '</div>';
+
+            $panel.html(
+                noticeHtml + cols +
+                '<div style="text-align:center;margin-top:12px">'
+                + '<button class="fs-btn fs-btn-outline fs-btn-sm swps-deepscan-btn" data-file="'+escAttr(file)+'">'
+                + '<span class="dashicons dashicons-search" style="font-size:12px;width:12px;height:12px"></span> Scan This File Deeply</button>'
+                + '</div>'
+                + '<div class="swps-deepscan-result" style="margin-top:10px"></div>'
+            );
+        }).fail(function(){ $btn.prop('disabled',false); $panel.html('<div style="color:#dc2626;font-size:12px;padding:8px">Request failed.</div>'); });
+    });
+
+    function escHtml(s){ return $('<div>').text(s||'').html(); }
+    function escAttr(s){ return String(s||'').replace(/"/g,'&quot;'); }
+
+    // Deep scan — re-runs the full malware-signature set against just this
+    // one file, no matter how large the diff looked above, and shows a
+    // Trust Score. Auto Fix only appears here if the backend confirms an
+    // official copy exists (determine_fim_fix()) — it is never shown and
+    // then disabled, it simply isn't rendered when there's nothing to
+    // verify/restore against.
+    $(document).on('click', '.swps-deepscan-btn', function(){
+        var $btn = $(this), file = $btn.data('file');
+        var $result = $btn.closest('.swps-diff-panel').find('.swps-deepscan-result');
+        $btn.prop('disabled', true).html('<span class="dashicons dashicons-update" style="font-size:12px;width:12px;height:12px"></span> Scanning…');
+        $.post(ajaxurl,{action:'swps_fim_deep_scan',nonce:NONCE,file:file},function(res){
+            $btn.prop('disabled', false).html('<span class="dashicons dashicons-search" style="font-size:12px;width:12px;height:12px"></span> Scan This File Deeply');
+            if(!res || !res.success){ $result.html('<div style="color:#dc2626;font-size:12px">'+((res&&res.data)||'Scan failed.')+'</div>'); return; }
+            var d = res.data;
+            var color = d.score >= 80 ? '#16a34a' : (d.score >= 40 ? '#d97706' : '#dc2626');
+            var findingsHtml = '';
+            if (d.findings && d.findings.length) {
+                findingsHtml = '<ul style="margin:6px 0 0;padding-left:18px;font-size:11px;color:#991b1b">' +
+                    d.findings.map(function(f){ return '<li>'+escHtml(f.sig_id)+' ('+escHtml(f.severity)+')</li>'; }).join('') + '</ul>';
+            }
+            var fixHtml = '';
+            if (d.fix_type && d.fix_type !== 'none') {
+                fixHtml = '<button class="fs-btn fs-btn-fix swps-fix-btn" style="margin-top:8px" data-id="" data-fix="'+escAttr(d.fix_type)+'" data-fix-data=\''+JSON.stringify({file:d.file})+'\'>'
+                    + '<span class="dashicons dashicons-admin-tools" style="font-size:12px;width:12px;height:12px"></span> '+escHtml(d.fix_label)+'</button>';
+            }
+            $result.html(
+                '<div style="text-align:center;padding:10px;border:1px solid #e2e8f0;border-radius:8px;background:#fff">'
+                + '<div style="font-size:11px;color:#64748b;font-weight:600;letter-spacing:.03em">TRUST SCORE</div>'
+                + '<div style="font-size:28px;font-weight:800;color:'+color+'">'+d.score+'<span style="font-size:14px;color:#94a3b8">/100</span></div>'
+                + findingsHtml + fixHtml
+                + '</div>'
+            );
+        }).fail(function(){
+            $btn.prop('disabled', false).html('<span class="dashicons dashicons-search" style="font-size:12px;width:12px;height:12px"></span> Scan This File Deeply');
+            $result.html('<div style="color:#dc2626;font-size:12px">Request failed.</div>');
+        });
+    });
+
+    // Trust update — explicit, logged "I did this" action for a whole
+    // plugin/theme folder (covers FTP/manual updates that never fired
+    // WordPress's own update hook). Still can't silently whitelist a file
+    // that matches a malware signature — see class-file-integrity.php.
+    $(document).on('click', '.swps-trustupdate-btn', function(){
+        var prefix = $(this).data('prefix'); if(!prefix) return;
+        if (!confirm('Trust all changes under "'+prefix+'" as something YOU did (FTP/manual update)?\n\nFiles that still match a malware signature will stay flagged regardless.')) return;
+        var $btn = $(this).prop('disabled',true).text('Trusting…');
+        $.post(ajaxurl,{action:'swps_fim_trust_update',nonce:NONCE,prefix:prefix},function(res){
+            if(res && res.success){ toast((res.data&&res.data.message)||'Trusted.','success'); setTimeout(function(){location.reload();},900); }
+            else { $btn.prop('disabled',false).text('I did this'); toast((res&&res.data)||'Failed.','error'); }
+        }).fail(function(){ $btn.prop('disabled',false).text('I did this'); toast('Request failed.','error'); });
+    });
+
     // Un-whitelist
     $(document).on('click', '.swps-unwhitelist-btn', function(){
         var btn=$(this);
@@ -740,6 +857,11 @@ function swps_render_issue_row($issue, $is_skipped = false) {
                     <span class="dashicons dashicons-undo" style="font-size:12px;width:12px;height:12px"></span> Unskip
                 </button>
             <?php else: ?>
+                <?php if (!empty($issue['has_diff'])): ?>
+                <button class="fs-btn fs-btn-outline fs-btn-sm swps-expand-btn" data-file="<?php echo esc_attr($issue['fix_data']['file'] ?? ''); ?>" title="Expand: before/after + deep scan">
+                    <span class="dashicons dashicons-arrow-down-alt2" style="font-size:12px;width:12px;height:12px"></span>
+                </button>
+                <?php endif; ?>
                 <?php if ($has_fix): ?>
                 <button class="fs-btn fs-btn-fix swps-fix-btn"
                     data-id="<?php echo esc_attr($id); ?>"
@@ -747,6 +869,13 @@ function swps_render_issue_row($issue, $is_skipped = false) {
                     data-fix-data="<?php echo $fd_json; ?>">
                     <span class="dashicons dashicons-admin-tools" style="font-size:12px;width:12px;height:12px"></span>
                     <?php echo esc_html($issue['fix_label']); ?>
+                </button>
+                <?php endif; ?>
+                <?php if (!empty($issue['trust_prefix'])): ?>
+                <button class="fs-btn fs-btn-outline fs-btn-sm swps-trustupdate-btn"
+                    data-prefix="<?php echo esc_attr($issue['trust_prefix']); ?>"
+                    title="I updated this myself (FTP/manual) — trust all changes under <?php echo esc_attr($issue['trust_prefix']); ?>">
+                    <span class="dashicons dashicons-yes-alt" style="font-size:12px;width:12px;height:12px"></span> I did this
                 </button>
                 <?php endif; ?>
                 <button class="fs-btn fs-btn-outline fs-btn-sm swps-skip-btn" data-id="<?php echo esc_attr($id); ?>">

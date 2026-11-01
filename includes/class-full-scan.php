@@ -221,43 +221,65 @@ class SWPS_Full_Scan {
 
             case 'fim':
                 $stats = SWPS_File_Integrity::get_stats();
-                foreach ($stats['changes'] ?? array() as $change) {
+                $changes = $stats['changes'] ?? array();
+
+                // Fix (discussed at length before writing any of this):
+                // batch size on its own PROVES NOTHING — a real update can
+                // be one hotfixed file, and an attacker can absolutely drop
+                // a whole fake "plugin package" at once. So it's used here
+                // ONLY to decide which issues a human should look at FIRST
+                // (triage/ordering), never to silently trust or hide
+                // anything. The one thing that still functions as actual
+                // evidence is the malware content-scan (already forces
+                // 'critical' upstream in class-file-integrity.php,
+                // independent of this).
+                $group_key = function($file) {
+                    if (preg_match('#^(wp-content/plugins/[^/]+)/#', $file, $m)) return $m[1];
+                    if (preg_match('#^(wp-content/themes/[^/]+)/#', $file, $m)) return $m[1];
+                    return null; // core/root files aren't grouped for batch-size purposes
+                };
+                $batch_counts = array();
+                foreach ($changes as $change) {
+                    $g = $group_key($change['file']);
+                    if ($g) $batch_counts[$g] = ($batch_counts[$g] ?? 0) + 1;
+                }
+
+                $fim_issues = array();
+                foreach ($changes as $change) {
                     $id = 'fim_' . md5($change['file']);
                     if (in_array($id, $whitelist)) continue;
 
-                    // Fix: a MODIFIED (not new, not deleted) plugin/theme
-                    // file used to only offer "Quarantine" — moving it aside
-                    // fixes the infection but also breaks the plugin/theme
-                    // until someone manually reinstalls it. If the plugin or
-                    // theme is actually hosted on WordPress.org, we can
-                    // instead pull the official file for the exact installed
-                    // version and restore it in place — the same idea as
-                    // Core Repair, just extended past wp-admin/wp-includes.
-                    // Matches the research finding that this is exactly what
-                    // Wordfence/Sucuri/Solid do too, and exactly where they
-                    // ALSO stop: a premium/commercial plugin or theme has no
-                    // public official copy to restore from, so it still only
-                    // gets Quarantine — same honest limit as every
-                    // competitor, not a gap unique to us.
-                    $fix_type  = 'quarantine_rel';
-                    $fix_label = 'Quarantine';
-                    if ($change['type'] === 'modified') {
-                        if (preg_match('#^wp-content/plugins/([^/]+)/#', $change['file'], $m)
-                            && class_exists('SWPS_Plugin_Theme_Repair') && SWPS_Plugin_Theme_Repair::is_wporg_plugin($m[1])) {
-                            $fix_type = 'repair_plugin_file'; $fix_label = 'Repair from WP.org';
-                        } elseif (preg_match('#^wp-content/themes/([^/]+)/#', $change['file'], $m)
-                            && class_exists('SWPS_Plugin_Theme_Repair') && SWPS_Plugin_Theme_Repair::is_wporg_theme($m[1])) {
-                            $fix_type = 'repair_theme_file'; $fix_label = 'Repair from WP.org';
-                        }
-                    }
+                    list($fix_type, $fix_label) = self::determine_fim_fix($change['file'], $change['type']);
+                    $group = $group_key($change['file']);
 
-                    $issues[] = self::make_issue($id, $change['severity'],
+                    $issue = self::make_issue($id, $change['severity'],
                         strtoupper($change['type']) . ': ' . basename($change['file']),
                         $change['file'],
                         $fix_type, $fix_label,
                         array('file' => $change['file'])
                     );
+                    // Extra, UI-only metadata — never read by scoring.
+                    $issue['batch_size']   = $group ? ($batch_counts[$group] ?? 1) : 1;
+                    $issue['trust_prefix'] = ($group && $change['severity'] !== 'critical') ? $group : null;
+                    $issue['has_diff']     = in_array($change['type'], array('modified', 'added'), true); // nothing to show for 'deleted' — the file is gone
+                    $fim_issues[] = $issue;
                 }
+
+                // Sort for triage: critical always first (a malware hit is
+                // never deprioritized by how many files came with it), then
+                // smaller batches before larger ones — an isolated 1-3 file
+                // change is statistically the more attacker-like shape and
+                // deserves a human's eyes sooner than a 90-file routine
+                // update, without that ordering ever implying the 90-file
+                // group is "safe" (it's still fully listed, same severity).
+                usort($fim_issues, function($a, $b) {
+                    if (($a['severity'] === 'critical') !== ($b['severity'] === 'critical')) {
+                        return $a['severity'] === 'critical' ? -1 : 1;
+                    }
+                    return $a['batch_size'] <=> $b['batch_size'];
+                });
+
+                $issues = array_merge($issues, $fim_issues);
                 break;
 
             case 'vuln':
@@ -415,6 +437,37 @@ class SWPS_Full_Scan {
     /* ─────────────────────────────────────────────
      * ISSUE FACTORY
      * ───────────────────────────────────────────── */
+    /**
+     * Decides whether a FIM-flagged file can be Auto-Fixed (repaired from
+     * the official WordPress.org copy) or only Quarantined. Shared by the
+     * normal Full Scan issue list AND the per-file "deep scan" panel, so
+     * the two can never disagree about which button to show. Covers
+     * 'added' and 'deleted' as well as 'modified' — restoring the official
+     * file is a sensible, equally safe action for all three (the download-
+     * and-write step already creates the file if it's missing).
+     * Quarantine remains the ONLY option for anything not confirmed to be
+     * on WordPress.org — same honest limit researched for Wordfence/
+     * Sucuri/Solid Security: there is no public source to verify a premium/
+     * commercial plugin or theme against, so "Auto Fix" simply never
+     * appears for one rather than guessing.
+     */
+    public static function determine_fim_fix($file, $change_type) {
+        if ($change_type === 'deleted') {
+            // Nothing to Quarantine (the file is already gone) — Repair is
+            // the only meaningful action, and only if we can verify it.
+        }
+        if (preg_match('#^wp-content/plugins/([^/]+)/#', $file, $m)
+            && class_exists('SWPS_Plugin_Theme_Repair') && SWPS_Plugin_Theme_Repair::is_wporg_plugin($m[1])) {
+            return array('repair_plugin_file', 'Auto Fix (restore from WP.org)');
+        }
+        if (preg_match('#^wp-content/themes/([^/]+)/#', $file, $m)
+            && class_exists('SWPS_Plugin_Theme_Repair') && SWPS_Plugin_Theme_Repair::is_wporg_theme($m[1])) {
+            return array('repair_theme_file', 'Auto Fix (restore from WP.org)');
+        }
+        if ($change_type === 'deleted') return array('none', '');
+        return array('quarantine_rel', 'Quarantine');
+    }
+
     private static function make_issue($id, $severity, $title, $detail, $fix, $fix_label, $fix_data) {
         return array(
             'id'        => $id,

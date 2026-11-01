@@ -24,6 +24,17 @@ class SWPS_Hardening {
         if ( ! empty( $h['limit_login_page_access'] ) ) add_action( 'login_head', array( __CLASS__, 'restrict_login_ip' ) );
         if ( ! empty( $h['disable_directory_listing'] ) ) self::write_htaccess_no_listing();
         if ( ! empty( $h['block_sensitive_files'] ) )  self::write_htaccess_block_sensitive_files();
+
+        // Fix (identified while discussing File Integrity's blind spots):
+        // wp-content/uploads is never scanned by any content-based check —
+        // it's a classic webshell-hiding spot specifically because it's
+        // writable and outside the monitored PHP/JS directories. Trying to
+        // perfectly DETECT a disguised webshell there (vs. a legitimate
+        // image) is an arms race with a high false-positive cost. Making
+        // PHP simply unable to EXECUTE there closes the whole attack class
+        // regardless of how well-hidden the file is — prevention instead of
+        // detection.
+        if ( ! empty( $h['block_php_in_uploads'] ) )  self::write_htaccess_block_uploads_php();
     }
 
     public static function get_defaults() {
@@ -44,6 +55,7 @@ class SWPS_Hardening {
             'disable_directory_listing'=> 1,
             'limit_login_page_access'  => 0,
             'block_sensitive_files'    => 1,
+            'block_php_in_uploads'     => 1,
         );
     }
 
@@ -161,6 +173,49 @@ class SWPS_Hardening {
             require_once ABSPATH . 'wp-admin/includes/misc.php';
         }
         insert_with_markers( $htaccess, $marker, $rules );
+    }
+
+    /**
+     * Blocks PHP from ever EXECUTING inside wp-content/uploads — not an
+     * attempt to detect a hidden webshell there (image-polyglot tricks,
+     * disguised extensions, etc. make perfect detection unreliable and
+     * false-positive-prone), but to make it structurally impossible for
+     * PHP placed there to run at all, regardless of how well it's hidden.
+     * Covers Apache/LiteSpeed (the handler-removal + FilesMatch deny this
+     * writes) with belt-and-braces duplicate directives, since this
+     * session already confirmed .htaccess enforcement can be inconsistent
+     * on at least one real host — an index.php guard is added too as a
+     * second, host-independent layer (stops directory listing/direct
+     * folder browsing even if .htaccess itself is ignored, though it does
+     * NOT by itself block execution of an individual known PHP filename —
+     * the .htaccess rules are what actually do that).
+     */
+    private static function write_htaccess_block_uploads_php() {
+        $dir = trailingslashit( wp_upload_dir()['basedir'] ?? ( WP_CONTENT_DIR . '/uploads' ) );
+        if ( ! is_dir( $dir ) ) wp_mkdir_p( $dir );
+
+        $htaccess = $dir . '.htaccess';
+        $marker   = 'SWPS Block PHP Execution';
+        $rules    = "<FilesMatch \"\\.(php|php\\d|phtml|phar|pht)$\">\n"
+                  . "    SetHandler none\n"
+                  . "    SetHandler default-handler\n"
+                  . "    RemoveHandler .php .php3 .php4 .php5 .php7 .phtml .phar .pht\n"
+                  . "    Order Allow,Deny\n"
+                  . "    Deny from all\n"
+                  . "    Require all denied\n"
+                  . "</FilesMatch>\n"
+                  . "Options -ExecCGI\n"
+                  . "php_flag engine off\n";
+
+        if ( ! function_exists( 'insert_with_markers' ) ) {
+            require_once ABSPATH . 'wp-admin/includes/misc.php';
+        }
+        insert_with_markers( $htaccess, $marker, $rules );
+
+        $guard = $dir . 'index.php';
+        if ( ! file_exists( $guard ) ) {
+            file_put_contents( $guard, "<?php\n// Silence is golden.\nexit;\n" );
+        }
     }
 
     /* ----- Apply bulk changes & generate report ----- */

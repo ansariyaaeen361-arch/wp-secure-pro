@@ -46,6 +46,7 @@
         <div class="swps-card-header">
             <h2>File Integrity Scan</h2>
             <div class="swps-card-actions">
+                <button id="swps-fim-prebaseline" class="button" title="Required before baseline — checks every file for malware and (for core) official checksums, so an existing infection can't get silently locked in as 'normal'">Scan Before Baseline</button>
                 <button id="swps-fim-baseline" class="button">Create New Baseline</button>
                 <button id="swps-fim-scan" class="button button-primary">Scan Now</button>
             </div>
@@ -136,6 +137,39 @@
 
 <script>
 jQuery(document).ready(function($) {
+    // Fix: baseline creation used to blindly trust whatever was on disk —
+    // if the site was already compromised the moment a baseline was taken,
+    // that infection got hashed and permanently treated as "normal". This
+    // button must run clean (malware scan on every file, plus a core
+    // checksum check) within the last hour before "Create New Baseline"
+    // will even be accepted by the server — same gate the automatic
+    // first-activation baseline uses, applied here too.
+    $('#swps-fim-prebaseline').on('click', function() {
+        var $btn = $(this).prop('disabled', true).text('Scanning… (can take a minute or more on a large site)');
+        $.post(ajaxurl, {action:'swps_fim_pre_baseline_scan', nonce:swps_vars.nonce}, function(res) {
+            $btn.prop('disabled',false).text('Scan Before Baseline');
+            if (!res.success) { $('#swps-fim-result').html('<div class="swps-notice swps-notice-error">'+(res.data||'Failed')+'</div>'); return; }
+            var d = res.data;
+            if (d.flagged && d.flagged.length) {
+                var rows = d.flagged.map(function(f){
+                    var why = f.reason==='malware_signature' ? 'matched malware signature '+$('<div>').text(f.detail).html()
+                            : f.reason==='php_in_uploads' ? 'a PHP file in the uploads folder — uploads should only ever hold media, never code'
+                            : 'does not match the official WordPress core file';
+                    return '<li><code>'+$('<div>').text(f.file).html()+'</code> — '+why+'</li>';
+                }).join('');
+                $('#swps-fim-result').html(
+                    '<div class="swps-notice swps-notice-critical">'
+                    + '<strong>' + d.flagged.length + ' file(s) look compromised — baseline is blocked until these are cleaned.</strong>'
+                    + '<ul style="margin:8px 0 0 18px">' + rows + '</ul>'
+                    + '<p style="margin:8px 0 0">Quarantine or manually remove/replace them (Full Scan\'s File &amp; Core Protection page can help), then run this scan again.</p>'
+                    + '</div>'
+                );
+            } else {
+                $('#swps-fim-result').html('<div class="swps-notice swps-notice-ok">Clean — checked ' + d.total_files + ' files, nothing suspicious found. You can create a baseline now.</div>');
+            }
+        }).fail(function(){ $btn.prop('disabled',false).text('Scan Before Baseline'); $('#swps-fim-result').html('<div class="swps-notice swps-notice-error">Request failed (server/network error).</div>'); });
+    });
+
     $('#swps-fim-baseline').on('click', function() {
         if (!confirm('Create new baseline? This will reset all current change tracking.')) return;
         var $btn = $(this).prop('disabled', true).text('Creating...');

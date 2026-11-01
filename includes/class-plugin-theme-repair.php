@@ -64,7 +64,7 @@ class SWPS_Plugin_Theme_Repair {
         return array( $m[1], $m[2] );
     }
 
-    private static function installed_plugin_version( $slug ) {
+    public static function installed_plugin_version( $slug ) {
         if ( ! function_exists('get_plugins') ) require_once ABSPATH . 'wp-admin/includes/plugin.php';
         foreach ( get_plugins() as $plugin_file => $data ) {
             if ( strpos( $plugin_file, $slug . '/' ) === 0 || $plugin_file === $slug . '.php' ) {
@@ -74,7 +74,7 @@ class SWPS_Plugin_Theme_Repair {
         return null;
     }
 
-    private static function installed_theme_version( $slug ) {
+    public static function installed_theme_version( $slug ) {
         $theme = wp_get_theme( $slug );
         return $theme->exists() ? $theme->get('Version') : null;
     }

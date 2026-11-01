@@ -72,6 +72,7 @@
                     'disable_directory_listing'=> array('label'=>'Hide Folder Contents','desc'=>'Stops people from seeing the list of files inside your folders when there is no index page. Prevents snooping.'),
                     'comment_nofollow'         => array('label'=>'Hold Spammy Comments','desc'=>'Automatically holds any comment that contains more than 2 links for your review. Most such comments are spam.'),
                     'limit_login_page_access'  => array('label'=>'Allow Login Only From Your IPs','desc'=>'Only the IP addresses you list (in Settings) can open the login page. Powerful, but use with care — a wrong IP can lock you out.'),
+                    'block_php_in_uploads'     => array('label'=>'Block Code From Running in Uploads','desc'=>'Your uploads folder should only ever hold images/files, never code — hackers love hiding there since file scanners often skip it. This makes any PHP file placed there unable to run at all, even if one sneaks in. Safe to keep on unless an old plugin specifically needs to run code from uploads (rare).'),
                 );
                 foreach ($items as $key => $info):
                 ?>

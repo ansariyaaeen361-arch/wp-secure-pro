@@ -5,8 +5,59 @@ class SWPS_DB_Monitor {
 
     public static function init() {
         add_action( 'swps_hourly_check',         array( __CLASS__, 'check_db_users' ) );
+        // Fix: PHP-in-uploads detection already existed (find_php_in_uploads(),
+        // used by the manual "DB Health Scan" button) but nothing ran it
+        // automatically — a webshell planted in wp-content/uploads (the
+        // classic hiding spot, since it's writable and outside FIM's
+        // monitored directories) would sit there undetected until someone
+        // happened to click that specific button on that specific tab. Now
+        // runs every hour alongside the DB user check.
+        add_action( 'swps_hourly_check',         array( __CLASS__, 'hourly_uploads_php_check' ) );
         add_action( 'wp_ajax_swps_db_scan',      array( __CLASS__, 'ajax_scan' ) );
         add_action( 'wp_ajax_swps_db_change_prefix', array( __CLASS__, 'ajax_change_prefix' ) );
+    }
+
+    /**
+     * Confirmed live on a real host: .htaccess-based PHP-execution blocking
+     * for wp-content/uploads (SetHandler/RemoveHandler AND a plain "Deny
+     * from all") was completely ignored by the server — a PHP file placed
+     * there executed normally regardless. And it can't be any other way in
+     * principle: a direct request for a standalone .php file under uploads
+     * is executed by the web server BEFORE WordPress ever loads, so no
+     * hook inside this plugin's PHP runtime ever gets a chance to run for
+     * that specific request either. True prevention from inside a
+     * WordPress plugin isn't reliably achievable here — only a server/
+     * vhost-level config change (outside what a plugin can do) actually
+     * prevents it. So this leans as hard as possible on the one thing that
+     * IS reliably achievable: auto-quarantining (not just alerting about)
+     * any PHP file found in uploads the moment this check runs, to cut the
+     * exposure window down as far as possible given prevention isn't an
+     * option here.
+     */
+    public static function hourly_uploads_php_check() {
+        $uploads = wp_upload_dir();
+        $found   = self::find_php_in_uploads( $uploads['basedir'] ?? '', 50 );
+
+        foreach ( $found as $file ) {
+            $full = ABSPATH . ltrim( $file, '/\\' );
+            $quarantined = false;
+            if ( class_exists( 'SWPS_File_Integrity' ) && file_exists( $full ) ) {
+                $rel = ltrim( str_replace( ABSPATH, '', $full ), '/\\' );
+                $quarantined = SWPS_File_Integrity::quarantine_file( $rel );
+            }
+            SWPS_Activity_Log::add( 'php_in_uploads', 'critical',
+                "PHP file found in uploads folder (classic webshell hiding spot): $file"
+                . ( $quarantined ? ' — automatically quarantined.' : ' — COULD NOT quarantine automatically, remove it manually right away.' )
+            );
+            SWPS_Email_Alerts::send_alert(
+                'SecureWP Shield: PHP file found in uploads folder' . ( $quarantined ? ' (auto-quarantined)' : ' — ACTION NEEDED' ),
+                "A PHP file was found in your uploads directory, where no PHP file should ever legitimately be:\n\n$file\n\n"
+                . ( $quarantined
+                    ? "It has been automatically moved out of the webroot and can no longer run."
+                    : "It could NOT be automatically quarantined (check file permissions) — remove or move it manually immediately; it is still able to run." )
+                . "\n\nThis is a common place attackers hide webshells."
+            );
+        }
     }
 
     /* ---- Database User Audit ---- */
@@ -141,7 +192,7 @@ class SWPS_DB_Monitor {
         return $results;
     }
 
-    private static function find_php_in_uploads( $dir, $limit = 20 ) {
+    public static function find_php_in_uploads( $dir, $limit = 20 ) {
         $found = array();
         if ( ! is_dir($dir) || count($found) >= $limit ) return $found;
         try {

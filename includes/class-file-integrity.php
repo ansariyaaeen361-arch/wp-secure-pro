@@ -5,6 +5,11 @@ class SWPS_File_Integrity {
 
     const BASELINE_OPTION = 'swps_file_baseline';
     const LAST_SCAN_OPTION = 'swps_fim_last_scan';
+    const PRE_BASELINE_SCAN_OPTION = 'swps_pre_baseline_scan';
+    // A clean pre-baseline scan only counts if it ran recently — otherwise
+    // someone could scan clean, wait a week while something gets planted,
+    // then baseline without ever re-checking.
+    const PRE_BASELINE_SCAN_MAX_AGE = HOUR_IN_SECONDS;
     // Fallback location, used only if a webroot-external directory can't be created.
     const QUARANTINE_DIR_FALLBACK = WP_CONTENT_DIR . '/swps-quarantine/';
 
@@ -34,9 +39,12 @@ class SWPS_File_Integrity {
         add_action( 'swps_hourly_check', array( __CLASS__, 'run_check' ) );
         add_action( 'admin_init',        array( __CLASS__, 'maybe_auto_baseline' ) );
         add_action( 'wp_ajax_swps_fim_baseline',  array( __CLASS__, 'ajax_create_baseline' ) );
+        add_action( 'wp_ajax_swps_fim_pre_baseline_scan', array( __CLASS__, 'ajax_pre_baseline_scan' ) );
         add_action( 'wp_ajax_swps_fim_scan',      array( __CLASS__, 'ajax_run_scan' ) );
         add_action( 'wp_ajax_swps_fim_restore',   array( __CLASS__, 'ajax_restore_file' ) );
         add_action( 'wp_ajax_swps_fim_ignore',    array( __CLASS__, 'ajax_ignore_file' ) );
+        add_action( 'wp_ajax_swps_fim_trust_update', array( __CLASS__, 'ajax_trust_update' ) );
+        add_action( 'wp_ajax_swps_fim_view_diff', array( __CLASS__, 'ajax_view_diff' ) );
 
         // Fix: without this, a totally routine plugin/theme/core update makes
         // every file it touches show up as a "changed" issue forever (the
@@ -83,13 +91,118 @@ class SWPS_File_Integrity {
         self::run_scan(); // reflect the clean state immediately rather than waiting for the next hourly check
     }
 
+    /**
+     * Explicit, admin-attributed "I updated this myself" action — covers
+     * updates that didn't go through WordPress's own updater (FTP, a
+     * host-level deploy tool, manually extracting a zip) and so never fired
+     * upgrader_process_complete. Deliberately NOT a silent/automatic trust
+     * path: it's one click, it's logged with who clicked it and when, and —
+     * same as the update-hook path — it still runs every file through the
+     * malware-signature check first, so an admin can't accidentally
+     * whitelist a genuinely malicious file just because it arrived bundled
+     * with 80 legitimate ones.
+     */
+    public static function ajax_trust_update() {
+        check_ajax_referer( 'swps_nonce', 'nonce' );
+        if ( ! current_user_can('manage_options') ) wp_send_json_error('Unauthorized');
+
+        $prefix = sanitize_text_field( wp_unslash( $_POST['prefix'] ?? '' ) );
+        if ( ! $prefix ) wp_send_json_error('Missing prefix.');
+
+        $skipped = self::refresh_baseline_for_prefixes( array( $prefix ) );
+        self::run_scan();
+
+        $user = wp_get_current_user();
+        $msg  = "Trusted update to \"$prefix\" ({$user->user_login})" . ( $skipped ? " — $skipped file(s) with a malware-signature match were NOT trusted and still need review." : '.' );
+        SWPS_Activity_Log::add( 'fim_trust_update', $skipped ? 'warning' : 'info', $msg );
+
+        wp_send_json_success( array(
+            'message' => $skipped
+                ? "Trusted — but $skipped file(s) still look suspicious and were left flagged for your review."
+                : 'Trusted. These changes will no longer show as an issue.',
+        ) );
+    }
+
+    /**
+     * Returns enough to let the admin SEE what changed, not just a bare
+     * filename — this is the context every researched competitor's admins
+     * end up relying on manually anyway (Wordfence support explicitly tells
+     * users to check a diff/changelog themselves). For WordPress.org-hosted
+     * core/plugin/theme files we have a real "official" copy to diff
+     * against (the same source Auto-Fix downloads from); for anything else
+     * there's no stored history to diff against (only a hash was kept, by
+     * design — storing full content for every monitored file would bloat
+     * the database), so only the current content is shown, honestly labeled
+     * as such rather than faking a diff.
+     */
+    public static function ajax_view_diff() {
+        check_ajax_referer( 'swps_nonce', 'nonce' );
+        if ( ! current_user_can('manage_options') ) wp_send_json_error('Unauthorized');
+
+        $rel = sanitize_text_field( wp_unslash( $_POST['file'] ?? '' ) );
+        $rel = ltrim( str_replace('..', '', $rel), '/\\' );
+        $full = ABSPATH . $rel;
+        if ( ! $rel || ! file_exists( $full ) || ! is_readable( $full ) ) {
+            wp_send_json_error('File not found or not readable.');
+        }
+        if ( filesize( $full ) > 2 * 1024 * 1024 ) {
+            wp_send_json_error('File is too large to display here (over 2MB) — view it directly on the server instead.');
+        }
+        $current = file_get_contents( $full );
+
+        $official  = null;
+        $has_malware = false;
+        if ( strpos( $rel, 'wp-admin/' ) === 0 || strpos( $rel, 'wp-includes/' ) === 0 || strpos( $rel, '/' ) === false ) {
+            if ( class_exists('SWPS_Core_Repair') ) {
+                $checksums = SWPS_Core_Repair::get_checksums();
+                if ( $checksums && isset( $checksums[ $rel ] ) ) {
+                    $version = get_bloginfo('version');
+                    $resp = wp_remote_get( "https://core.svn.wordpress.org/tags/{$version}/{$rel}", array('timeout'=>20) );
+                    if ( ! is_wp_error($resp) && wp_remote_retrieve_response_code($resp) === 200 ) $official = wp_remote_retrieve_body($resp);
+                }
+            }
+        } elseif ( class_exists('SWPS_Plugin_Theme_Repair') && preg_match('#^wp-content/plugins/([^/]+)/(.+)$#', $rel, $m ) && SWPS_Plugin_Theme_Repair::is_wporg_plugin( $m[1] ) ) {
+            $official = self::fetch_wporg_official_content( 'plugin', $m[1], $m[2] );
+        } elseif ( class_exists('SWPS_Plugin_Theme_Repair') && preg_match('#^wp-content/themes/([^/]+)/(.+)$#', $rel, $m ) && SWPS_Plugin_Theme_Repair::is_wporg_theme( $m[1] ) ) {
+            $official = self::fetch_wporg_official_content( 'theme', $m[1], $m[2] );
+        }
+
+        if ( class_exists('SWPS_Malware_DNA') ) {
+            $has_malware = ! empty( SWPS_Malware_DNA::scan_file( $full ) );
+        }
+
+        wp_send_json_success( array(
+            'file'          => $rel,
+            'current'       => mb_convert_encoding( $current, 'UTF-8', 'UTF-8' ),
+            'official'      => $official !== null ? mb_convert_encoding( $official, 'UTF-8', 'UTF-8' ) : null,
+            'has_official'  => $official !== null,
+            'has_malware'   => $has_malware,
+        ) );
+    }
+
+    private static function fetch_wporg_official_content( $kind, $slug, $inner ) {
+        $v = $kind === 'plugin'
+            ? SWPS_Plugin_Theme_Repair::installed_plugin_version( $slug )
+            : SWPS_Plugin_Theme_Repair::installed_theme_version( $slug );
+        if ( ! $v ) return null;
+
+        $url = $kind === 'plugin'
+            ? sprintf( SWPS_Plugin_Theme_Repair::PLUGIN_SVN, $slug, $v, $inner )
+            : sprintf( SWPS_Plugin_Theme_Repair::THEME_SVN, $slug, $v, $inner );
+
+        $resp = wp_remote_get( $url, array('timeout'=>20) );
+        if ( is_wp_error($resp) || wp_remote_retrieve_response_code($resp) !== 200 ) return null;
+        return wp_remote_retrieve_body( $resp );
+    }
+
     /** Re-hashes every currently-monitored file under any of the given
      *  relative path prefixes and updates just those entries in the
      *  baseline, leaving everything else untouched. Also drops baseline
-     *  entries for files that were removed as part of the same update. */
-    private static function refresh_baseline_for_prefixes( $prefixes ) {
+     *  entries for files that were removed as part of the same update.
+     *  Returns the count of files skipped due to a malware-signature hit. */
+    public static function refresh_baseline_for_prefixes( $prefixes ) {
         $baseline = get_option( self::BASELINE_OPTION, array() );
-        if ( empty($baseline) ) return; // no baseline yet — nothing to refresh
+        if ( empty($baseline) ) return 0; // no baseline yet — nothing to refresh
 
         $matches_prefix = function( $rel ) use ( $prefixes ) {
             foreach ( $prefixes as $p ) {
@@ -114,10 +227,11 @@ class SWPS_File_Integrity {
         // batch that matches a malware signature is skipped here — it stays
         // OUT of the trusted baseline and keeps showing as a flagged change
         // on the next scan, even though the update event itself was real.
+        $skipped = 0;
         foreach ( self::get_monitored_files() as $path ) {
             $rel = self::rel($path);
             if ( ! $matches_prefix($rel) || ! is_readable($path) ) continue;
-            if ( self::content_malware_hit( $path ) ) continue;
+            if ( self::content_malware_hit( $path ) ) { $skipped++; continue; }
             $baseline[$rel] = array(
                 'hash'  => hash_file( 'sha256', $path ),
                 'size'  => filesize($path),
@@ -126,10 +240,21 @@ class SWPS_File_Integrity {
         }
 
         update_option( self::BASELINE_OPTION, $baseline );
+        return $skipped;
     }
 
     /* ── Baseline ─────────────────────────────────────────────────────────── */
 
+    /**
+     * A baseline is only as trustworthy as the moment it was taken — if a
+     * backdoor is already sitting on the site the first time this runs,
+     * create_baseline() would hash it right alongside everything else and
+     * "bless" it as permanently normal, never to be flagged again. This is
+     * now gated behind run_pre_baseline_scan() coming back clean, recently
+     * (see ajax_create_baseline() / maybe_auto_baseline()) — the raw
+     * version below is kept as the actual hashing step, called only after
+     * that gate passes.
+     */
     public static function create_baseline() {
         $files    = self::get_monitored_files();
         $baseline = array();
@@ -151,8 +276,99 @@ class SWPS_File_Integrity {
     public static function ajax_create_baseline() {
         check_ajax_referer( 'swps_nonce', 'nonce' );
         if ( ! current_user_can('manage_options') ) wp_send_json_error('Unauthorized');
+
+        $gate = self::check_pre_baseline_gate();
+        if ( $gate !== true ) wp_send_json_error( $gate );
+
         $count = self::create_baseline();
         wp_send_json_success( array( 'count' => $count, 'message' => "Baseline created with $count files." ) );
+    }
+
+    /** Returns true if it's safe to baseline right now, or an error string explaining why not. */
+    private static function check_pre_baseline_gate() {
+        $scan = get_option( self::PRE_BASELINE_SCAN_OPTION, array() );
+        if ( empty( $scan['scanned_at'] ) ) {
+            return 'Run "Scan Before Baseline" first — a baseline taken blind could lock in an existing infection as "normal" forever.';
+        }
+        if ( ( time() - $scan['scanned_at'] ) > self::PRE_BASELINE_SCAN_MAX_AGE ) {
+            return 'Your pre-baseline scan is over an hour old — run "Scan Before Baseline" again to make sure nothing changed since.';
+        }
+        if ( ! empty( $scan['flagged'] ) ) {
+            return count( $scan['flagged'] ) . ' file(s) look compromised — remove/clean them first (Quarantine or manually), then run "Scan Before Baseline" again. Baseline cannot be created while they\'re still there.';
+        }
+        return true;
+    }
+
+    /**
+     * Scans EVERY monitored file — core, and plugins/themes whether or not
+     * they're on WordPress.org — for malware signatures, the one check that
+     * doesn't depend on having an official source to compare against. Core
+     * files also get a cheap bulk checksum comparison (one WordPress.org
+     * API call) as a second, independent check. Deliberately does NOT do a
+     * per-file official-content fetch for every plugin/theme file here —
+     * that's a real HTTP request per file and would be far too slow across
+     * thousands of files; that check already exists on demand (Auto Fix /
+     * View diff) for an individual flagged file once something else (the
+     * malware scan) has pointed at it.
+     */
+    public static function run_pre_baseline_scan() {
+        $files   = self::get_monitored_files();
+        $flagged = array();
+
+        $core_checksums = class_exists('SWPS_Core_Repair') ? SWPS_Core_Repair::get_checksums() : false;
+
+        foreach ( $files as $path ) {
+            if ( ! is_readable( $path ) ) continue;
+            $rel = self::rel( $path );
+
+            $malware = self::content_malware_hit( $path );
+            if ( $malware ) {
+                $flagged[] = array( 'file' => $rel, 'reason' => 'malware_signature', 'detail' => $malware );
+                continue;
+            }
+
+            if ( $core_checksums && isset( $core_checksums[ $rel ] ) ) {
+                if ( md5_file( $path ) !== $core_checksums[ $rel ] ) {
+                    $flagged[] = array( 'file' => $rel, 'reason' => 'core_checksum_mismatch', 'detail' => '' );
+                }
+            }
+        }
+
+        // wp-content/uploads isn't in get_monitored_files() at all (see that
+        // method) — it's media, constantly growing from normal site use, so
+        // hash-tracking every file there would be pure noise. But a PHP
+        // file's mere PRESENCE there is already suspicious regardless of
+        // content (no legitimate upload is ever a .php file), so it's
+        // checked here as its own, much cheaper signal.
+        if ( class_exists('SWPS_DB_Monitor') ) {
+            $uploads = wp_upload_dir();
+            foreach ( SWPS_DB_Monitor::find_php_in_uploads( $uploads['basedir'] ?? '', 50 ) as $uf ) {
+                $flagged[] = array( 'file' => ltrim( str_replace( ABSPATH, '', $uf ), '/\\' ), 'reason' => 'php_in_uploads', 'detail' => '' );
+            }
+        }
+
+        $result = array(
+            'scanned_at'   => time(),
+            'total_files'  => count( $files ),
+            'flagged'      => $flagged,
+        );
+        update_option( self::PRE_BASELINE_SCAN_OPTION, $result, false );
+
+        if ( ! empty( $flagged ) ) {
+            SWPS_Activity_Log::add( 'fim_pre_baseline_dirty', 'critical',
+                count( $flagged ) . ' file(s) flagged before baseline could be created — site may already be compromised.' );
+        } else {
+            SWPS_Activity_Log::add( 'fim_pre_baseline_clean', 'info',
+                'Pre-baseline scan clean — ' . count( $files ) . ' files checked, safe to baseline.' );
+        }
+
+        return $result;
+    }
+
+    public static function ajax_pre_baseline_scan() {
+        check_ajax_referer( 'swps_nonce', 'nonce' );
+        if ( ! current_user_can('manage_options') ) wp_send_json_error('Unauthorized');
+        wp_send_json_success( self::run_pre_baseline_scan() );
     }
 
     /**
@@ -169,8 +385,26 @@ class SWPS_File_Integrity {
         $baseline = get_option( self::BASELINE_OPTION, array() );
 
         if ( empty( $baseline ) ) {
-            self::create_baseline();
-            update_option( 'swps_fim_plugin_version', SWPS_VERSION );
+            // Fix: this used to baseline immediately on first run — on a
+            // fresh install there's no history to compare against, so if a
+            // backdoor was ALREADY sitting on the site the moment this
+            // fired, it would get hashed right along with everything else
+            // and permanently "blessed" as normal. Now it scans for malware
+            // signatures (and checks core files against WordPress.org's
+            // checksums) FIRST; only a clean result auto-baselines. A dirty
+            // result leaves the baseline empty — effectively holding FIM
+            // off — and logs a critical Activity Log entry so the owner
+            // sees it, rather than silently normalizing an infection.
+            // Rate-limited so a site that stays dirty doesn't re-run this on
+            // every single admin page load.
+            if ( get_transient( 'swps_auto_prebaseline_lock' ) ) return;
+            set_transient( 'swps_auto_prebaseline_lock', 1, 10 * MINUTE_IN_SECONDS );
+
+            $scan = self::run_pre_baseline_scan();
+            if ( empty( $scan['flagged'] ) ) {
+                self::create_baseline();
+                update_option( 'swps_fim_plugin_version', SWPS_VERSION );
+            }
             return;
         }
 
