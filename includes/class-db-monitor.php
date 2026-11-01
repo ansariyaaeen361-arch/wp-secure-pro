@@ -194,17 +194,47 @@ class SWPS_DB_Monitor {
 
     public static function find_php_in_uploads( $dir, $limit = 20 ) {
         $found = array();
-        if ( ! is_dir($dir) || count($found) >= $limit ) return $found;
+        if ( ! is_dir($dir) ) return $found;
         try {
             $iter = new RecursiveIteratorIterator( new RecursiveDirectoryIterator( $dir, RecursiveDirectoryIterator::SKIP_DOTS ) );
             foreach ( $iter as $file ) {
-                if ( $file->getExtension() === 'php' ) {
-                    $found[] = str_replace( ABSPATH, '/', $file->getPathname() );
-                    if ( count($found) >= $limit ) break;
-                }
+                if ( count($found) >= $limit ) break;
+                if ( $file->getExtension() !== 'php' ) continue;
+                // Fix (live-caught false positive): WordPress core and many
+                // plugins (Tutor LMS, MailPoet, etc.) place a tiny, harmless
+                // "Silence is golden." index.php in every uploads
+                // subdirectory purely to stop directory listing — this
+                // plugin's own quarantine_dir() writes the exact same
+                // pattern. Flagging/quarantining every .php file in uploads
+                // with no content check removed real WordPress stub files
+                // from a live site, with no attacker involved at all.
+                if ( self::is_harmless_stub_php( $file->getPathname() ) ) continue;
+                $found[] = str_replace( ABSPATH, '/', $file->getPathname() );
             }
         } catch ( Exception $e ) {}
         return $found;
+    }
+
+    /** True only for a trivially empty PHP file with no executable logic
+     *  beyond an early exit/comment — never for anything containing a
+     *  function call that could actually do something, however small. */
+    private static function is_harmless_stub_php( $path ) {
+        if ( ! is_readable($path) || filesize($path) > 300 ) return false;
+        $content = @file_get_contents($path);
+        if ( $content === false ) return false;
+
+        $danger = array(
+            'eval', 'base64_decode', 'gzinflate', 'gzuncompress', 'gzdecode', 'str_rot13',
+            'system(', 'exec(', 'shell_exec', 'passthru', 'assert(', 'create_function',
+            '$_GET', '$_POST', '$_REQUEST', '$_COOKIE', '$_FILES', '$_SERVER',
+            'fwrite', 'fopen', 'curl_exec', 'proc_open', 'popen(', 'include', 'require',
+        );
+        foreach ( $danger as $d ) {
+            if ( stripos( $content, $d ) !== false ) return false;
+        }
+
+        $stripped = preg_replace( '#/\*.*?\*/|//[^\n]*|\s+#s', '', $content );
+        return strlen( $stripped ) < 40; // e.g. "<?phpexit;" — nothing left to be malicious
     }
 
     /* ---- Table Prefix Changer ---- */

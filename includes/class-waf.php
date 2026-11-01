@@ -133,9 +133,29 @@ class SWPS_WAF {
         }
 
         // 3. Collect all input to scan
+        //
+        // Fix (live production crash, confirmed via server error log on
+        // multiple sites): $_GET/$_POST values aren't always strings — any
+        // array-style field name (?color[]=red&color[]=blue, common in
+        // WooCommerce, Elementor forms, multi-selects, etc.) makes PHP
+        // populate that key with an ARRAY. array_values() doesn't flatten
+        // nested arrays, so urldecode() — which requires a string argument
+        // — received an array and threw an uncaught TypeError, taking the
+        // entire page down with a fatal error for any real visitor who hit
+        // a totally normal form. Recursively flattening to string leaves
+        // before urldecode() fixes this while still scanning every actual
+        // value for attack patterns.
+        $flatten = function( $value ) use ( &$flatten ) {
+            $out = array();
+            foreach ( (array) $value as $v ) {
+                if ( is_array( $v ) ) { $out = array_merge( $out, $flatten( $v ) ); }
+                elseif ( is_string( $v ) ) { $out[] = $v; }
+            }
+            return $out;
+        };
         $inputs = array_merge(
-            array_values( $_GET ),
-            array_values( $_POST ),
+            $flatten( $_GET ),
+            $flatten( $_POST ),
             array( $_SERVER['REQUEST_URI'] ?? '' ),
             array( $_SERVER['HTTP_REFERER'] ?? '' ),
         );
