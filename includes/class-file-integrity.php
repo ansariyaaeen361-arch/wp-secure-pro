@@ -44,6 +44,7 @@ class SWPS_File_Integrity {
         add_action( 'wp_ajax_swps_fim_restore',   array( __CLASS__, 'ajax_restore_file' ) );
         add_action( 'wp_ajax_swps_fim_ignore',    array( __CLASS__, 'ajax_ignore_file' ) );
         add_action( 'wp_ajax_swps_fim_trust_update', array( __CLASS__, 'ajax_trust_update' ) );
+        add_action( 'wp_ajax_swps_fim_trust_all',    array( __CLASS__, 'ajax_trust_all_updates' ) );
         add_action( 'wp_ajax_swps_fim_view_diff', array( __CLASS__, 'ajax_view_diff' ) );
 
         // Fix: without this, a totally routine plugin/theme/core update makes
@@ -120,6 +121,70 @@ class SWPS_File_Integrity {
             'message' => $skipped
                 ? "Trusted — but $skipped file(s) still look suspicious and were left flagged for your review."
                 : 'Trusted. These changes will no longer show as an issue.',
+        ) );
+    }
+
+    /**
+     * One-click cleanup for the backlog that piles up when several real
+     * plugin/theme/core updates landed before the baseline was ever
+     * refreshed for them (e.g. this plugin was only just installed/updated
+     * on a site that already had months of normal auto-updates behind it).
+     * Walks every CURRENT File Integrity change exactly once and re-hashes
+     * it into the baseline — grouped by plugin/theme/core the same way the
+     * Full Scan UI groups them, so this is just "I did this" run in bulk,
+     * not a new trust mechanism. The one hard line: a file whose severity
+     * is already 'critical' (a malware-signature hit, forced upstream in
+     * run_scan()) is NEVER included here, no matter how many clean files
+     * surround it — those still require the admin to look at them, or
+     * explicitly Quarantine/remove them, one at a time.
+     */
+    public static function ajax_trust_all_updates() {
+        check_ajax_referer( 'swps_nonce', 'nonce' );
+        if ( ! current_user_can('manage_options') ) wp_send_json_error('Unauthorized');
+
+        $stats   = self::get_stats();
+        $changes = $stats['changes'] ?? array();
+
+        $prefix_of = function( $file ) {
+            if ( preg_match('#^(wp-content/plugins/[^/]+)/#', $file, $m) ) return $m[1];
+            if ( preg_match('#^(wp-content/themes/[^/]+)/#',  $file, $m) ) return $m[1];
+            if ( strpos( $file, 'wp-admin/' )    === 0 ) return 'wp-admin';
+            if ( strpos( $file, 'wp-includes/' ) === 0 ) return 'wp-includes';
+            if ( strpos( $file, '/' ) === false )        return ''; // root *.php
+            return null;
+        };
+
+        $prefixes = array();
+        $critical_count = 0;
+        foreach ( $changes as $change ) {
+            if ( $change['severity'] === 'critical' ) { $critical_count++; continue; }
+            $p = $prefix_of( $change['file'] );
+            if ( $p !== null && ! in_array( $p, $prefixes, true ) ) $prefixes[] = $p;
+        }
+
+        if ( ! $prefixes ) {
+            wp_send_json_error( $critical_count
+                ? "All $critical_count remaining change(s) are malware-flagged and must be reviewed individually — nothing safe to bulk-trust."
+                : 'Nothing to trust — no non-critical changes found.'
+            );
+        }
+
+        $skipped = self::refresh_baseline_for_prefixes( $prefixes );
+        self::run_scan();
+
+        $user = wp_get_current_user();
+        $msg  = "Bulk-trusted current changes across " . count($prefixes) . " plugin/theme/core group(s) ({$user->user_login})"
+              . ( $skipped ? " — $skipped file(s) with a malware-signature match were NOT trusted." : '.' )
+              . ( $critical_count ? " $critical_count critical (malware-flagged) change(s) were left for manual review." : '' );
+        SWPS_Activity_Log::add( 'fim_trust_update', ( $skipped || $critical_count ) ? 'warning' : 'info', $msg );
+
+        wp_send_json_success( array(
+            'groups'   => count( $prefixes ),
+            'skipped'  => $skipped,
+            'critical' => $critical_count,
+            'message'  => 'Trusted ' . count($prefixes) . ' group(s).'
+                . ( $skipped ? " $skipped file(s) stayed flagged (malware match)." : '' )
+                . ( $critical_count ? " $critical_count critical issue(s) still need manual review." : '' ),
         ) );
     }
 
@@ -451,41 +516,48 @@ class SWPS_File_Integrity {
         $ignored = get_option( 'swps_fim_ignored', array() );
         $files   = self::get_monitored_files();
         $changes = array();
+        $baseline_dirty = false;
+        $auto_absorbed  = 0;
 
-        // Check for modified and new files
+        // Fix (explicit, repeated user request): a non-core file that
+        // changed and did NOT match any malware signature is, overwhelmingly,
+        // just a normal plugin/theme update — not something worth an
+        // admin's attention every single time. Rather than surface it and
+        // make the admin click "I did this" on hundreds of individual rows,
+        // it's folded straight into the baseline right here, silently, and
+        // only a one-line count goes to the Activity Log. Nothing about the
+        // actual safety check changes: content_malware_hit() still runs on
+        // every added/modified file first, and ANYTHING it flags — or any
+        // change to a core file (wp-admin/, wp-includes/, wp-config.php,
+        // index.php, .htaccess — see get_severity()) — is excluded from this
+        // auto-absorb and always surfaced for a human to look at.
         foreach ( $files as $path ) {
             $rel = self::rel($path);
             if ( in_array($rel, $ignored) ) continue;
             if ( ! is_readable($path) ) continue;
 
             $hash = hash_file( 'sha256', $path );
+            $is_core = self::get_severity($rel) === 'critical';
 
             if ( ! isset($baseline[$rel]) ) {
-                // Fix: a brand-new file is a DISCOVERY, not a confirmed
-                // problem — unlike a file whose CONTENT changed (which
-                // really can indicate tampering), a new file most often
-                // just means a theme/plugin was installed after the
-                // baseline was taken. This used to carry full 'warning'
-                // severity, so a single legitimate theme install (which can
-                // easily add 50-100+ files) tanked Full Scan's grade to F —
-                // confirmed live. 'info' severity (same tier already used
-                // for 'deleted' below) still surfaces it for review and
-                // quarantine without that scoring cliff.
-                //
-                // BUT: "low severity by default" must never mean "unscanned
-                // by default". A malware-signature hit always overrides this
-                // back to critical regardless of how innocent the surrounding
-                // context (batch size, a just-ran legitimate update, a
-                // version bump) looks — content is the one signal an
-                // attacker with file-write access can't also falsify just by
-                // riding along on a real update event. See is_fake_safe_add()
-                // for the reasoning behind every other signal in this file.
                 $malware = self::content_malware_hit( $path );
+                if ( ! $malware && ! $is_core ) {
+                    $baseline[$rel] = array( 'hash' => $hash, 'size' => filesize($path), 'mtime' => filemtime($path) );
+                    $baseline_dirty = true;
+                    $auto_absorbed++;
+                    continue;
+                }
                 $entry = array( 'file' => $rel, 'type' => 'added', 'severity' => $malware ? 'critical' : 'info' );
                 if ( $malware ) $entry['malware_sig'] = $malware;
                 $changes[] = $entry;
             } elseif ( $hash !== $baseline[$rel]['hash'] ) {
                 $malware = self::content_malware_hit( $path );
+                if ( ! $malware && ! $is_core ) {
+                    $baseline[$rel] = array( 'hash' => $hash, 'size' => filesize($path), 'mtime' => filemtime($path) );
+                    $baseline_dirty = true;
+                    $auto_absorbed++;
+                    continue;
+                }
                 $entry = array(
                     'file'        => $rel,
                     'type'        => 'modified',
@@ -499,14 +571,25 @@ class SWPS_File_Integrity {
             }
         }
 
-        // Check for deleted files
+        // Check for deleted files — a removed non-core file is likewise
+        // auto-absorbed (baseline entry dropped) rather than surfaced; a
+        // missing core file stays visible, since core files should never
+        // just disappear outside of an update that also replaces them.
         foreach ( $baseline as $rel => $data ) {
             if ( in_array($rel, $ignored) ) continue;
             $full = ABSPATH . $rel;
             if ( ! file_exists($full) ) {
-                $changes[] = array( 'file' => $rel, 'type' => 'deleted', 'severity' => 'info' );
+                if ( self::get_severity($rel) === 'critical' ) {
+                    $changes[] = array( 'file' => $rel, 'type' => 'deleted', 'severity' => 'info' );
+                } else {
+                    unset( $baseline[$rel] );
+                    $baseline_dirty = true;
+                    $auto_absorbed++;
+                }
             }
         }
+
+        if ( $baseline_dirty ) update_option( self::BASELINE_OPTION, $baseline );
 
         $result = array(
             'scanned_at' => time(),
@@ -517,6 +600,10 @@ class SWPS_File_Integrity {
         );
 
         update_option( self::LAST_SCAN_OPTION, $result );
+
+        if ( $auto_absorbed > 0 ) {
+            SWPS_Activity_Log::add( 'fim_auto_absorb', 'info', "$auto_absorbed non-core file change(s) matched no malware signature and were silently folded into the baseline (routine plugin/theme updates)." );
+        }
 
         if ( ! empty($changes) ) {
             $critical_count = $result['critical'];

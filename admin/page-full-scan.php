@@ -235,6 +235,7 @@ $has_scan  = !empty($results);
             else                                   $warnings_list[] = $issue;
         }
     }
+    $fim_warning_count = count(array_filter($warnings_list, fn($i) => ($i['step'] ?? '') === 'fim'));
 ?>
 
 <!-- Critical -->
@@ -251,9 +252,17 @@ $has_scan  = !empty($results);
 <!-- Warnings -->
 <?php if ($warnings_list): ?>
 <div class="fs-card fs-head-yellow">
-    <div class="fs-card-head">
-        <span class="dashicons dashicons-flag" style="color:#d97706"></span>
-        <h2>Warnings <span style="font-weight:400;color:#64748b">(<?php echo count($warnings_list); ?>)</span></h2>
+    <div class="fs-card-head" style="justify-content:space-between">
+        <div style="display:flex;align-items:center;gap:10px">
+            <span class="dashicons dashicons-flag" style="color:#d97706"></span>
+            <h2>Warnings <span style="font-weight:400;color:#64748b">(<?php echo count($warnings_list); ?>)</span></h2>
+        </div>
+        <?php if ($fim_warning_count > 1): ?>
+        <button type="button" id="swps-fim-trust-all" class="fs-btn fs-btn-outline fs-btn-sm" title="Re-baselines every non-critical file-change at once, grouped by plugin/theme/core — malware-flagged (critical) items are never touched by this.">
+            <span class="dashicons dashicons-yes-alt" style="font-size:13px;width:13px;height:13px"></span>
+            Trust All Current Updates (<?php echo $fim_warning_count; ?>)
+        </button>
+        <?php endif; ?>
     </div>
     <?php foreach ($warnings_list as $issue): swps_render_issue_row($issue, false); endforeach; ?>
 </div>
@@ -807,6 +816,29 @@ $has_scan  = !empty($results);
         }).fail(function(){
             bem.disabled=false; bem.innerHTML='<span class="dashicons dashicons-email-alt" style="font-size:14px;width:14px;height:14px"></span> Email Report';
             toast('Email request failed (server/network error)','error');
+        });
+    });
+
+    // Trust all current FIM updates (bulk)
+    var btAll = document.getElementById('swps-fim-trust-all');
+    if (btAll) btAll.addEventListener('click', function(){
+        if (!confirm('This re-baselines every non-critical file change right now, grouped by plugin/theme/core — exactly like clicking "I did this" on each one, just in one step. Any malware-flagged (critical) change is left untouched for you to review separately. Continue?')) return;
+        btAll.disabled = true;
+        var origHtml = btAll.innerHTML;
+        btAll.innerHTML = '<span class="dashicons dashicons-update-alt" style="animation:spin 1s linear infinite;font-size:13px;width:13px;height:13px"></span> Trusting...';
+        $.post(ajaxurl, {action:'swps_fim_trust_all', nonce:NONCE}, function(res){
+            if (res.success) {
+                toast(res.data.message || 'Trusted.', 'success');
+                setTimeout(function(){ location.reload(); }, 900);
+            } else {
+                toast(res.data || 'Failed', 'error');
+                btAll.disabled = false;
+                btAll.innerHTML = origHtml;
+            }
+        }).fail(function(){
+            toast('Request failed (server/network error)', 'error');
+            btAll.disabled = false;
+            btAll.innerHTML = origHtml;
         });
     });
 
