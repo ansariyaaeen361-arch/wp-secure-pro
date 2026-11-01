@@ -37,10 +37,18 @@ class SWPS_Rate_Limiter {
         $rules    = self::get_rules();
         $rule     = $rules[$endpoint] ?? $rules['global'];
         $key      = 'swps_rl_' . $endpoint . '_' . md5($ip);
-        $block_key= 'swps_rl_block_' . $endpoint . '_' . md5($ip);
 
-        // Check if already blocked
-        if (get_transient($block_key)) {
+        // Fix: a rate-limit block used to live only in a transient — a
+        // second, invisible blocking mechanism the IP Blocker admin page
+        // had no idea existed, so a blocked automation/bot IP showed
+        // nowhere in "Currently Blocked IPs" and there was no Unblock
+        // button for it (confirmed: the only "fix" was waiting out the
+        // transient, or deleting it by hand in the database). Recording the
+        // block through SWPS_IP_Blocker::block_ip() instead puts it in the
+        // exact same table/list/Unblock flow as every other block, and
+        // checking is_blocked() here means clicking that Unblock button
+        // actually lifts a rate-limit block immediately — not just hides it.
+        if ( SWPS_IP_Blocker::is_blocked( $ip ) ) {
             self::block_response($endpoint, $ip);
         }
 
@@ -49,7 +57,7 @@ class SWPS_Rate_Limiter {
         set_transient($key, $count, $rule['window']);
 
         if ($count > $rule['limit']) {
-            set_transient($block_key, 1, $rule['block']);
+            SWPS_IP_Blocker::block_ip( $ip, "Rate limit exceeded: $endpoint ($count requests in {$rule['window']}s)", round($rule['block'] / 60) ?: 1 );
             self::log_rate_limit($ip, $endpoint, $count, $rule);
             self::block_response($endpoint, $ip);
         }
@@ -118,7 +126,18 @@ class SWPS_Rate_Limiter {
 
     public static function hook_rest() {
         add_action('rest_pre_dispatch', function($result, $server, $request) {
-            SWPS_Rate_Limiter::check('rest_api');
+            // Fix: this limit (100 req/min by default) was applied to EVERY
+            // REST request, authenticated or not — so a site owner's own
+            // automation/bot using an Application Password got rate-limited
+            // and effectively blocked just for doing real, legitimate work
+            // at any real volume. An authenticated request (valid App
+            // Password, cookie+nonce, or any other auth method WordPress
+            // accepted before this hook ran) is by definition not an
+            // anonymous abuser — only anonymous/unauthenticated REST
+            // traffic is rate-limited now.
+            if ( ! is_user_logged_in() ) {
+                SWPS_Rate_Limiter::check('rest_api');
+            }
             return $result;
         }, 10, 3);
     }
