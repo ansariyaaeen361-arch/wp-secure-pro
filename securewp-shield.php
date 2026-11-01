@@ -3,7 +3,7 @@
  * Plugin Name: SecureWP Shield
  * Plugin URI:  https://yoursite.com
  * Description: Enterprise WordPress Security Suite — WAF, 2FA, Full Site Scan, Core Repair, Honeypot, Rate Limiter, Challenge Page, DNA Scanner, Canary Tokens, IP Reputation, SIEM, Multi-Site Monitor, Threat Feed Server
- * Version:     5.0.26
+ * Version:     5.0.27
  * Author:      Yaseen
  * Author URI:  https://yoursite.com
  * Text Domain: securewp-shield
@@ -12,7 +12,7 @@
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-define( 'SWPS_VERSION',     '5.0.26' );
+define( 'SWPS_VERSION',     '5.0.27' );
 define( 'SWPS_AUTHOR',      'Yaseen' );
 define( 'SWPS_PLUGIN_DIR',  plugin_dir_path( __FILE__ ) );
 define( 'SWPS_PLUGIN_URL',  plugin_dir_url( __FILE__ ) );
@@ -517,7 +517,17 @@ function swps_ajax_clear_log() {
     check_ajax_referer( 'swps_nonce', 'nonce' );
     if ( ! current_user_can('manage_options') ) wp_die('Unauthorized');
     global $wpdb;
-    $wpdb->query( "TRUNCATE TABLE " . $wpdb->prefix . SWPS_TABLE_LOG ); // phpcs:ignore
+    // Fix: TRUNCATE needs the DROP privilege in MySQL, not just DELETE —
+    // many shared-hosting DB users only get DELETE/INSERT/UPDATE/SELECT, so
+    // TRUNCATE silently failed there. Its return value was never checked
+    // either, so the handler reported "Log cleared." (and the page reloaded
+    // looking successful) even though nothing was actually removed. DELETE
+    // only needs the DELETE privilege, which is essentially always granted,
+    // and the result is now actually checked before claiming success.
+    $result = $wpdb->query( "DELETE FROM " . $wpdb->prefix . SWPS_TABLE_LOG );
+    if ( $result === false ) {
+        wp_send_json_error( 'Could not clear the log: ' . $wpdb->last_error );
+    }
     wp_send_json_success( array('message' => 'Log cleared.') );
 }
 

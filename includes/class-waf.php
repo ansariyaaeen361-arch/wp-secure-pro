@@ -63,12 +63,21 @@ class SWPS_WAF {
     );
 
     // Bad bots / user agents
+    // Fix: 'python-requests', 'curl/', 'wget/' and 'go-http-client' used to
+    // be in this list — those aren't attack tools, they're the default
+    // User-Agent of generic HTTP client libraries that any legitimate
+    // automation (a cron job, a Zapier/n8n flow, a custom integration using
+    // an Application Password) is just as likely to use as an attacker is.
+    // Blocking them broke real automation/REST API use with no way to
+    // "unblock" short of changing the client's User-Agent, while giving an
+    // actual attacker nothing they couldn't trivially bypass by spoofing a
+    // browser UA anyway. Every signature kept below is a named security
+    // tool with no legitimate reason to ever hit a production site.
     private static $bad_bots = array(
         'sqlmap', 'nikto', 'nmap', 'masscan', 'zgrab',
         'dirbuster', 'gobuster', 'wfuzz', 'burpsuite',
         'acunetix', 'nessus', 'openvas', 'w3af',
         'havij', 'pangolin', 'safe3', 'libwww-perl',
-        'python-requests', 'curl/', 'wget/', 'go-http-client',
         'scrapy', 'phantomjs', 'headless', 'metasploit',
         'commix', 'dropbear',
     );

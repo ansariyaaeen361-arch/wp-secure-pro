@@ -150,6 +150,17 @@ jQuery(document).ready(function($) {
             .done(function(res) {
                 if (res && res.success) {
                     $content.html(res.data.html); // jQuery .html() re-executes any <script> tags inside
+                    // Fix: a WordPress Settings API form (action="options.php",
+                    // e.g. Live Traffic's settings) embeds a hidden
+                    // _wp_http_referer field via settings_fields() — but this
+                    // HTML was rendered server-side INSIDE the admin-ajax.php
+                    // request that fetched it, so that hidden field captured
+                    // admin-ajax.php's own URL, not this real page. Submitting
+                    // the form then redirected back to a blank admin-ajax.php
+                    // page instead of here. Rewriting it to the real page URL
+                    // right after injection fixes every settings form on every
+                    // tab, not just one page.
+                    $content.find('input[name="_wp_http_referer"]').val(href);
                     if (history.pushState) history.pushState({}, res.data.title || '', href);
                     if (res.data.title) document.title = res.data.title;
                     swpsUpdateSidebarHighlight(pt.page);
