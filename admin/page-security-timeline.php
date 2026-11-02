@@ -118,6 +118,29 @@
 <script>
 jQuery(document).ready(function($) {
 
+    // Fix (live — confirmed all 4 charts on this page rendered blank):
+    // Chart.js loads from an external <script src> tag that the group-tab
+    // AJAX nav system injects right alongside this inline script — a
+    // browser doesn't reliably finish that external load before the next
+    // inline <script> block runs when it's injected this way (unlike
+    // normal top-to-bottom HTML parsing), so `new Chart(...)` below could
+    // run before the Chart global even existed, throwing immediately and
+    // leaving every chart's canvas empty with no visible error. Same fix
+    // pattern as the Attack Map and the 2FA QR code's library loads.
+    var chartTries = 0;
+    function initCharts() {
+        if (typeof Chart === 'undefined') {
+            chartTries++;
+            if (chartTries > 50) {
+                $('#swps-weekly-chart, #swps-hourly-chart, #swps-event-types-chart, #swps-severity-chart').each(function(){
+                    $(this).replaceWith('<p style="color:#f87171;text-align:center;padding:20px">Chart library failed to load — check your connection and refresh.</p>');
+                });
+                return;
+            }
+            setTimeout(initCharts, 100);
+            return;
+        }
+
     Chart.defaults.color = '#7f8c8d';
     Chart.defaults.font.family = '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
 
@@ -212,5 +235,8 @@ jQuery(document).ready(function($) {
         },
         options: { responsive: true, plugins: { legend: { position: 'right' } } }
     });
+
+    } // end initCharts
+    initCharts();
 });
 </script>

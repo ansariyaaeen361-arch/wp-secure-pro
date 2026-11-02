@@ -54,7 +54,7 @@
         <h2>Hardening Options</h2>
         <form method="post" action="">
             <?php wp_nonce_field('swps_save_hardening', 'swps_hardening_nonce'); ?>
-            <table class="form-table swps-form-table">
+            <div class="swps-hardening-grid">
                 <?php
                 $items = array(
                     'remove_wp_version'        => array('label'=>'Hide WordPress Version','desc'=>'Hides which WordPress version your site runs. Hackers use the version to look up known weaknesses, so hiding it makes you a harder target. Safe to keep on.'),
@@ -76,18 +76,18 @@
                 );
                 foreach ($items as $key => $info):
                 ?>
-                <tr>
-                    <th><?php echo esc_html($info['label']); ?></th>
-                    <td>
+                <div class="swps-toggle-item">
+                    <div class="swps-toggle-item-head">
                         <label class="swps-toggle">
                             <input type="checkbox" name="swps_hardening[<?php echo $key; ?>]" value="1" <?php checked(!empty($options[$key])); ?>>
                             <span class="swps-slider"></span>
                         </label>
-                        <span class="description"><?php echo esc_html($info['desc']); ?></span>
-                    </td>
-                </tr>
+                        <strong><?php echo esc_html($info['label']); ?></strong>
+                    </div>
+                    <p class="description"><?php echo esc_html($info['desc']); ?></p>
+                </div>
                 <?php endforeach; ?>
-            </table>
+            </div>
             <?php submit_button('Save Hardening Settings'); ?>
         </form>
     </div>

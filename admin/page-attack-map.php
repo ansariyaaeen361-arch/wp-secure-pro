@@ -107,8 +107,27 @@ jQuery(function($) {
     var values = <?php echo wp_json_encode($map_values ?: new stdClass()); ?>;
     window.swpsAttackValues = values;
 
+    var mapTries = 0;
     function initMap() {
-        if (typeof jsVectorMap === 'undefined') { return; }
+        // Fix (live — confirmed the map never rendered at all): this used
+        // to just give up silently if jsVectorMap wasn't defined YET,
+        // instead of retrying. The library loads from an external <script
+        // src> tag injected alongside this inline script by the group-tab
+        // AJAX nav system — browsers don't reliably guarantee that external
+        // script finishes loading before the next inline <script> block
+        // runs when it's injected this way (unlike normal top-to-bottom
+        // HTML parsing), so on a slower connection or an uncached CDN hit
+        // this ran before the library was ready, every time, with no retry
+        // to recover. Same fix pattern as the 2FA QR code's library load.
+        if (typeof jsVectorMap === 'undefined') {
+            mapTries++;
+            if (mapTries > 50) {
+                document.getElementById('swps-vmap').innerHTML = '<p style="color:#f87171;text-align:center;padding:20px">Map library failed to load — check your connection and refresh.</p>';
+                return;
+            }
+            setTimeout(initMap, 100);
+            return;
+        }
         try {
             new jsVectorMap({
                 selector: '#swps-vmap',
@@ -123,8 +142,20 @@ jQuery(function($) {
                     regions: [{
                         attribute: 'fill',
                         values: values,
-                        scale: ['#ffb3a7', '#e74c3c', '#7b1a10'],
-                        normalizeFunction: 'polynomial'
+                        // Fix (explicit user request): the previous 3-stop
+                        // gradient gave the HIGHEST-attack country the
+                        // DARKEST color (#7b1a10) — exactly backwards from
+                        // what's readable on this dark map background, and
+                        // confirmed live: Pakistan had the most attacks by
+                        // far (176, vs 20 for the next-highest country) and
+                        // rendered almost indistinguishable from the
+                        // default un-attacked fill (#24384a). A flat scale
+                        // (same color at both ends) makes every country
+                        // with ANY attack count solid, unmistakable red —
+                        // no gradient to misread, exactly what was asked
+                        // for. Countries with zero attacks aren't in
+                        // `values` at all, so they keep the default fill.
+                        scale: ['#e74c3c', '#e74c3c']
                     }]
                 },
                 onRegionTooltipShow: function(event, tooltip, code) {

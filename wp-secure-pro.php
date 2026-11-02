@@ -3,7 +3,7 @@
  * Plugin Name: WP Secure Pro
  * Plugin URI:  https://yoursite.com
  * Description: Enterprise WordPress Security Suite — WAF, 2FA, Full Site Scan, Core Repair, Honeypot, Rate Limiter, Challenge Page, DNA Scanner, Canary Tokens, IP Reputation, SIEM, Multi-Site Monitor, Threat Feed Server
- * Version:     2.0.0
+ * Version:     2.0.6
  * Author:      Yaseen
  * Author URI:  https://yoursite.com
  * Text Domain: wp-secure-pro
@@ -12,7 +12,7 @@
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-define( 'SWPS_VERSION',     '2.0.0' );
+define( 'SWPS_VERSION',     '2.0.6' );
 define( 'SWPS_AUTHOR',      'Yaseen' );
 define( 'SWPS_PLUGIN_DIR',  plugin_dir_path( __FILE__ ) );
 define( 'SWPS_PLUGIN_URL',  plugin_dir_url( __FILE__ ) );
@@ -266,6 +266,25 @@ function swps_send_no_cache_headers() {
     }
 }
 
+// Fix: the no-cache headers above only ever fired on 'current_screen' —
+// which covers a normal full admin.php page load, but NOT
+// wp-admin/admin-ajax.php requests, since those never set up a WP_Screen
+// at all. Both this plugin's own AJAX page-fetch (the group-tab nav system
+// that loads e.g. Full Scan's content without a full page reload) and
+// every settings-save AJAX action (like the Auto-Scan Schedule dropdown)
+// go through admin-ajax.php — so a cache layer willing to cache THAT URL
+// was never told not to, and a save could appear to "revert" after
+// navigating back to the page via the sidebar (served a cached pre-save
+// AJAX response) even though the database value was already correct, as
+// confirmed live by directly reading the option after a save. Covering
+// every swps_* action in one place here closes that gap without having to
+// repeat the same three lines in each individual AJAX handler.
+add_action( 'init', function() {
+    if ( ! wp_doing_ajax() ) return;
+    $action = sanitize_key( wp_unslash( $_REQUEST['action'] ?? '' ) );
+    if ( strpos( $action, 'swps_' ) === 0 ) swps_send_no_cache_headers();
+}, 1 );
+
 add_action( 'admin_menu', 'swps_admin_menu' );
 function swps_admin_menu() {
     $wl       = get_option('swps_white_label', array());
@@ -283,7 +302,7 @@ function swps_admin_menu() {
     // sits inside a stable #swps-page-content container that JS can swap
     // out for AJAX-driven navigation (see swps_ajax_load_page()). ──
     add_submenu_page( 'swps-dashboard', 'Dashboard',           'Dashboard',             'manage_options', 'swps-dashboard',    'swps_shell_dashboard' );
-    add_submenu_page( 'swps-dashboard', '⚡ Full Site Scan',    '⚡ Full Scan',          'manage_options', 'swps-full-scan',    'swps_shell_full_scan' );
+    add_submenu_page( 'swps-dashboard', 'Full Site Scan',    'Full Scan',          'manage_options', 'swps-full-scan',    'swps_shell_full_scan' );
     add_submenu_page( 'swps-dashboard', 'Firewall & Hardening','Firewall & Hardening',  'manage_options', 'swps-firewall',     'swps_shell_firewall' );
     add_submenu_page( 'swps-dashboard', 'File & Core Protection','File & Core Protection','manage_options','swps-protection',  'swps_shell_protection' );
     add_submenu_page( 'swps-dashboard', 'Access Control',      'Access Control',        'manage_options', 'swps-access',       'swps_shell_access' );

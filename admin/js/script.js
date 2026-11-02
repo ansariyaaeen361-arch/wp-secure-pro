@@ -1,7 +1,19 @@
 jQuery(document).ready(function($) {
 
+    // Fix: this file loads once via jQuery(document).ready() on the very
+    // first full page load — but the group-tab system swaps page content
+    // via AJAX without a reload, so a button like #swps-clear-log-btn that
+    // only exists on a page other than the one loaded first never gets a
+    // handler bound to it (the binding ran before that button existed), and
+    // a button that DOES exist at ready-time loses its handler the moment
+    // its DOM node is replaced by the next AJAX-swapped page. Delegating
+    // through $(document) matches the selector at click-time instead of
+    // bind-time, so it keeps working no matter how many times the content
+    // underneath has been swapped. Confirmed live: button worked after a
+    // hard refresh but did nothing after navigating via the sidebar.
+
     // Run Security Scan
-    $('#swps-run-scan-btn').on('click', function() {
+    $(document).on('click', '#swps-run-scan-btn', function() {
         var btn = $(this);
         btn.prop('disabled', true).html('<span class="dashicons dashicons-update-alt" style="animation:spin 1s linear infinite"></span> Scanning...');
         $('#swps-scan-progress').show();
@@ -77,7 +89,7 @@ jQuery(document).ready(function($) {
     });
 
     // Clear log
-    $('#swps-clear-log-btn').on('click', function() {
+    $(document).on('click', '#swps-clear-log-btn', function() {
         if (!confirm('Clear all activity log entries? This cannot be undone.')) return;
         var btn = $(this).prop('disabled', true);
         $.post(swps_vars.url, {
@@ -201,8 +213,26 @@ jQuery(document).ready(function($) {
         var $top = $menu.find('> li').has('a[href*="page=swps-dashboard"]').first();
         $top.addClass('wp-has-current-submenu wp-menu-open');
         $top.find('> a').addClass('wp-has-current-submenu');
-        var $match = $menu.find('a[href*="page=' + page + '"]').first();
-        $match.closest('li').addClass('current');
+
+        // Fix: the old [href*="page=X"] substring match silently failed to
+        // highlight the submenu item for any group-tab page (Access
+        // Control, Firewall & Hardening, etc.) — confirmed live: navigating
+        // to Access Control > IP Blocker left every submenu item
+        // unhighlighted. Comparing the exact ?page= value via the URL API
+        // instead of a raw substring is immune to the kind of mismatch that
+        // caused it (e.g. one slug being a prefix of another, or trailing
+        // query params changing the raw string without changing the page).
+        $menu.find('.wp-submenu a, > li > a').each(function() {
+            var href = $(this).attr('href');
+            if (!href) return;
+            try {
+                var linkPage = new URL(href, window.location.origin).searchParams.get('page');
+                if (linkPage === page) {
+                    $(this).closest('li').addClass('current');
+                    return false; // first match only
+                }
+            } catch (e) {}
+        });
     }
 
     // Back/forward after an AJAX nav pushed a new URL: simplest correct

@@ -31,7 +31,8 @@
     <div class="swps-card">
         <div class="swps-card-header">
             <form method="get" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-                <input type="hidden" name="page" value="swps-audit">
+                <input type="hidden" name="page" value="swps-monitoring">
+                <input type="hidden" name="tab" value="audit">
                 <select name="action_filter" class="swps-select-sm">
                     <option value="">All Actions</option>
                     <?php
@@ -43,14 +44,27 @@
                 </select>
                 <button type="submit" class="button">Filter</button>
                 <?php if ($filter_action || $filter_user): ?>
-                <a href="?page=swps-audit" class="button">Clear</a>
+                <a href="?page=swps-monitoring&tab=audit" class="button">Clear Filter</a>
                 <?php endif; ?>
             </form>
             <a href="<?php echo admin_url('admin-ajax.php?action=swps_audit_export&nonce=' . wp_create_nonce('swps_nonce')); ?>" class="button">
                 Export CSV
             </a>
+            <button type="button" id="swps-audit-clear" class="button button-link-delete" style="margin-left:auto">Clear Log</button>
         </div>
     </div>
+    <script>
+    jQuery(function($){
+        $('#swps-audit-clear').on('click', function(){
+            if (!confirm('Permanently delete all audit trail entries? This cannot be undone.')) return;
+            var $btn = $(this).prop('disabled', true).text('Clearing…');
+            $.post(ajaxurl, {action:'swps_audit_clear', nonce: swps_vars.nonce}, function(res){
+                if (res && res.success) { location.reload(); }
+                else { alert((res && res.data && res.data.message) || (res && res.data) || 'Clear failed.'); $btn.prop('disabled', false).text('Clear Log'); }
+            }).fail(function(){ alert('Request failed (server/network error).'); $btn.prop('disabled', false).text('Clear Log'); });
+        });
+    });
+    </script>
 
     <!-- Audit Log Table -->
     <div class="swps-card">
@@ -74,7 +88,7 @@
                 </td>
                 <td>
                     <?php if ($log['user_id']): ?>
-                    <a href="<?php echo admin_url('admin.php?page=swps-audit&user_filter=' . $log['user_id']); ?>">
+                    <a href="<?php echo admin_url('admin.php?page=swps-monitoring&tab=audit&user_filter=' . $log['user_id']); ?>">
                         <strong><?php echo esc_html($log['user_login']); ?></strong>
                     </a>
                     <?php else: ?>
@@ -103,10 +117,10 @@
         <?php if (count($logs) === $limit): ?>
         <div class="swps-pagination" style="padding:12px 0">
             <?php if ($page > 1): ?>
-            <a href="?page=swps-audit&paged=<?php echo $page-1; ?><?php echo $filter_action ? '&action_filter='.$filter_action : ''; ?>" class="button">← Previous</a>
+            <a href="?page=swps-monitoring&tab=audit&paged=<?php echo $page-1; ?><?php echo $filter_action ? '&action_filter='.$filter_action : ''; ?>" class="button">← Previous</a>
             <?php endif; ?>
             <span class="swps-muted">Page <?php echo $page; ?></span>
-            <a href="?page=swps-audit&paged=<?php echo $page+1; ?><?php echo $filter_action ? '&action_filter='.$filter_action : ''; ?>" class="button">Next →</a>
+            <a href="?page=swps-monitoring&tab=audit&paged=<?php echo $page+1; ?><?php echo $filter_action ? '&action_filter='.$filter_action : ''; ?>" class="button">Next →</a>
         </div>
         <?php endif; ?>
     </div>

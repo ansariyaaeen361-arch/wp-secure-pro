@@ -405,21 +405,61 @@ class SWPS_Two_Factor {
                 <th>Setup TOTP</th>
                 <td>
                     <p>Scan this QR code in Google Authenticator or Authy:</p>
-                    <div id="swps-qr-code" style="margin:10px 0; width:200px; height:200px; background:#f0f0f0; display:flex; align-items:center; justify-content:center; font-size:12px; color:#555; border:1px solid #ddd; padding:10px; word-break:break-all;">
-                        <small>Secret Key:<br><strong><?php echo esc_html($secret); ?></strong><br><br>Enter manually in your app:<br>Account: <?php echo esc_html($user->user_email); ?><br>Key: <?php echo esc_html($secret); ?><br>Type: Time-based</small>
+                    <?php
+                    // Fix (explicit user report): this box never actually
+                    // contained a QR code — just the secret printed as
+                    // plain text, every time, for every user. Real QR
+                    // rendering happens entirely CLIENT-SIDE via a bundled
+                    // JS library (no CDN, no external request) so the TOTP
+                    // secret — the literal key to generating someone's 2FA
+                    // codes — never leaves the browser/this site. Sending
+                    // it to a third-party "QR generator" API, as some
+                    // naive implementations do, would hand that secret to
+                    // whoever runs that API.
+                    $totp_uri = self::get_totp_uri( $secret, $user );
+                    ?>
+                    <div id="swps-qr-code" style="margin:10px 0; width:200px; height:200px; background:#fff; display:flex; align-items:center; justify-content:center; border:1px solid #ddd; padding:10px;" data-totp-uri="<?php echo esc_attr( $totp_uri ); ?>">
+                        <small style="color:#999">Generating QR code…</small>
                     </div>
+                    <p style="font-size:12px;color:#666">Can't scan? Enter manually — Account: <code><?php echo esc_html($user->user_email); ?></code>, Key: <code><?php echo esc_html($secret); ?></code>, Type: Time-based</p>
                     <input type="hidden" name="swps_totp_secret" value="<?php echo esc_attr($secret); ?>">
                     <p><strong>Verify your TOTP code to confirm setup:</strong></p>
                     <input type="text" name="swps_totp_verify" maxlength="6" placeholder="Enter 6-digit code" style="font-size:18px; letter-spacing:4px; width:160px; text-align:center;">
                 </td>
             </tr>
         </table>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
         <script>
         document.querySelectorAll('[name="swps_2fa_method"]').forEach(function(r){
             r.addEventListener('change',function(){
                 document.getElementById('swps-totp-row').style.display = this.value==='totp' ? '' : 'none';
             });
         });
+        (function(){
+            var box = document.getElementById('swps-qr-code');
+            if (!box) return;
+            var uri = box.getAttribute('data-totp-uri');
+            // Fix: swapped to the davidshimjs/qrcodejs library — the
+            // earlier attempt (the "qrcode" npm package's CDN build)
+            // never actually finished loading in practice, leaving the
+            // box stuck on "Generating QR code…" indefinitely. This one
+            // is one of the most widely deployed QR JS libraries and has
+            // a dead-simple constructor API (no async callback to hang on).
+            var tries = 0;
+            function render() {
+                tries++;
+                if (typeof QRCode === 'undefined') {
+                    if (tries > 50) { box.innerHTML = '<small style="color:#c0392b;padding:10px">QR code library failed to load — use the manual key below instead.</small>'; return; }
+                    setTimeout(render, 100);
+                    return;
+                }
+                box.innerHTML = '';
+                box.style.background = '#fff';
+                box.style.padding = '0';
+                new QRCode(box, { text: uri, width: 198, height: 198, correctLevel: QRCode.CorrectLevel.M });
+            }
+            render();
+        })();
         </script>
         <?php
     }

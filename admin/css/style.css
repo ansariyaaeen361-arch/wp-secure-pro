@@ -88,7 +88,7 @@
 .swps-stat-num   { font-size: 30px; font-weight: 800; line-height: 1; }
 
 /* ── Cards ── */
-.swps-main-grid  { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; }
+.swps-main-grid  { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; align-items: start; }
 .swps-card-full  { grid-column: 1 / -1; }
 
 .swps-card {
@@ -98,7 +98,26 @@
     border: 1px solid var(--swps-border);
     overflow: hidden;
     margin-bottom: 20px;
+    padding: 18px 20px;
 }
+/* .swps-card always carries its own padding now (see above) — so ANY raw
+   content placed directly inside it (a heading, a <canvas>, a <table>, a
+   <form>, a plain list — no wrapper div at all) automatically gets proper
+   spacing, fixing every page that used that pattern (Security Timeline's
+   charts, Threat Intelligence's Honeypot/Fake Login/Rate Limiter tabs,
+   etc.) without having to special-case each one.
+   .swps-card-header and .swps-card-body are the two exceptions: pages that
+   use them already give them their OWN padding, so — instead of trying to
+   detect "does this card have a body too" (confirmed wrong: Threat
+   Intelligence has a .swps-card-header directly followed by raw form/list
+   content with NO .swps-card-body at all, so turning the whole card's
+   padding off whenever a header was present left everything after that
+   header flush against the edges again) — each of the two simply cancels
+   the parent's padding on its own sides via a negative margin and re-
+   applies its own. This is correct no matter which of the two is present,
+   both, or neither. */
+.swps-card-header { margin: -18px -20px 0; }
+.swps-card-body    { margin: 0 -20px -18px; }
 .swps-card h2 { margin-top: 0; font-size: 15px; border-bottom: 1px solid var(--swps-border); padding-bottom: 10px; color: var(--swps-text); }
 .swps-card-header {
     background: #f8fafc;
@@ -112,16 +131,31 @@
     color: var(--swps-text);
 }
 .swps-card-header .dashicons { color: var(--swps-primary); }
+/* Stays pinned at the top of its own scroll cap above if a page happens
+   to put the header as a direct sibling of the table inside one scrolling
+   .swps-card (most pages use a separate .swps-card-body instead, where
+   this has no effect since the header then sits outside that container). */
+.swps-card-header { position: sticky; top: 0; z-index: 2; }
 .swps-header-warning { background: #fff8e1; }
 .swps-card-body  { padding: 18px 20px; }
 .swps-card-info  { background: #f0f7ff; border-color: #bdd7f5; }
 .swps-card-actions { display: flex; align-items: center; gap: 8px; }
 
-.swps-grid-2col  { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; margin-bottom: 20px; }
-.swps-two-col    { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+/* align-items:start — CSS Grid's default (stretch) forces every card in a
+   row to the SAME height as its tallest sibling, so a short card (e.g.
+   "Block IP Address") shows a big empty box below its real content just
+   to match a taller neighbor (e.g. "Recent Attackers" with a long list).
+   Confirmed live. start lets each card size to its own content instead. */
+.swps-grid-2col  { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; margin-bottom: 20px; align-items: start; }
+.swps-two-col    { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
 
 /* ── Tables ── */
-.swps-table      { width: 100%; border-collapse: collapse; font-size: 13px; }
+/* !important: confirmed live (Rate Limiter's "Default Rules" table) a
+   plain `width:100%` here was still losing to something else and the
+   table rendered at roughly half its card's width with empty space next
+   to it — forcing it wins regardless of what else is setting a width. */
+.swps-table      { width: 100% !important; border-collapse: collapse; font-size: 13px; }
+.swps-table.widefat { table-layout: auto; }
 .swps-table th   { background: #f1f5f9; padding: 10px 12px; text-align: left; font-weight: 600; color: var(--swps-muted); text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; border-bottom: 2px solid var(--swps-border); }
 .swps-table td   { padding: 10px 12px; border-bottom: 1px solid var(--swps-border); vertical-align: middle; color: var(--swps-text); background: #ffffff; }
 .swps-table-striped tr:nth-child(even) td { background: #f9fafb; }
@@ -131,11 +165,40 @@
 .swps-row-warning td  { background: #fffbf0 !important; }
 .swps-row-info td     { background: #f0f7ff !important; }
 
+/* ── Cap height + internal scroll for log/data tables (explicit user
+   request) — without this, a page like Activity Log or Audit Trail with
+   hundreds of rows makes the whole WordPress admin page extremely long to
+   scroll. max-height only ever CAPS height; a table with just a few rows
+   simply fits with no scrollbar, so this is safe to apply to every card
+   that happens to hold one of these tables, not just the ones that are
+   large today. Matches both markup patterns used across pages: a table
+   as the direct child of .swps-card (e.g. Audit Trail), and a table
+   inside a nested .swps-card-body (e.g. IP Blocker). */
+.swps-card:has(> table.swps-table),
+.swps-card-body:has(> table.swps-table) {
+    max-height: 70vh;
+    overflow-y: auto;
+}
+.swps-table thead th { position: sticky; top: 0; z-index: 1; }
+
 /* ── Badges ── */
 .swps-badge          { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
 .swps-badge-danger,.swps-badge-critical { background: #fde8e8; color: #c0392b; }
 .swps-badge-warning  { background: #fef3cd; color: #856404; }
 .swps-badge-ok,.swps-badge-info { background: #d4edda; color: #155724; }
+
+/* ── Hardening Options — 2-column toggle list (explicit user request: this
+   was a single long form-table with 16 rows, each with a paragraph-length
+   description, making the page very tall). Each item is a self-contained
+   box rather than a table row so it can sit in either column cleanly. */
+.swps-hardening-grid  { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px 24px; align-items: start; }
+.swps-toggle-item     { padding: 12px 0; border-bottom: 1px solid var(--swps-border); }
+.swps-toggle-item-head{ display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+.swps-toggle-item-head strong { font-size: 13px; color: var(--swps-text); }
+.swps-toggle-item .description { margin: 0; font-size: 12px; color: var(--swps-muted); line-height: 1.5; }
+@media (max-width: 782px) {
+    .swps-hardening-grid { grid-template-columns: 1fr; }
+}
 
 /* ── Alerts ── */
 .swps-alert-inline   { padding: 10px 16px; border-radius: 6px; font-size: 13px; margin: 8px 0; }
@@ -167,7 +230,15 @@
 .swps-form-table th  { width: 220px; }
 .swps-select         { max-width: 400px; }
 .swps-select-sm      { padding: 4px 8px; font-size: 12px; border-radius: 4px; border: 1px solid var(--swps-border); background: #fff; color: var(--swps-text); }
-.swps-select-multi   { min-width: 280px; border: 1px solid var(--swps-border); border-radius: 4px; background: #fff; color: var(--swps-text); }
+/* Fix (live screenshot — GeoIP Blocking's country list): the `size="8"`
+   attribute on this multi-select was supposed to cap it to ~8 visible rows
+   with its own internal scrollbar, but something (likely a WP-admin or
+   host theme style setting an explicit height/line-height on <select>)
+   overrode that, so it rendered every one of ~195 countries as its own
+   row — a page over 12,000px tall. max-height + overflow-y:auto forces
+   the cap back regardless of what's fighting it, since an explicit
+   max-height always wins over a select's own size-attribute sizing. */
+.swps-select-multi   { min-width: 280px; max-height: 220px; overflow-y: auto; border: 1px solid var(--swps-border); border-radius: 4px; background: #fff; color: var(--swps-text); }
 
 /* ── Toggle switch ── */
 .swps-toggle            { position: relative; display: inline-block; width: 44px; height: 24px; vertical-align: middle; margin-right: 6px; }
@@ -191,7 +262,7 @@
    Multi-Site, Advanced Settings) already use for their OWN internal tabs.
    Reusing the same classes here nested those two tab bars' CSS and JS
    together and broke both. ── */
-.swps-gtab-bar      { max-width: 1320px; margin: 0 20px 18px 0; box-sizing: border-box; }
+.swps-gtab-bar      { max-width: 1320px; margin: 0 20px 18px 20px; box-sizing: border-box; }
 .swps-gtab-bar .swps-page-title { display: flex; align-items: center; gap: 10px; font-size: 20px; font-weight: 700; margin: 18px 0 14px; color: var(--swps-text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 .swps-gtab-bar .swps-page-title .dashicons { font-size: 24px; color: var(--swps-primary); }
 .swps-gtabs         { display: flex; gap: 2px; flex-wrap: wrap; overflow-x: auto; border-bottom: 2px solid var(--swps-border); background: #fff; }
@@ -270,7 +341,7 @@
 
 /* Consistent box model + comfortable page width */
 .swps-wrap, .swps-wrap * { box-sizing: border-box; }
-.swps-wrap { max-width: 1320px; margin-right: 20px; padding-bottom: 40px; }
+.swps-wrap { max-width: 1320px; margin-right: 20px; margin-left: 20px; padding-bottom: 40px; }
 
 /* Page-title intro text under each heading */
 .swps-wrap > p.description,

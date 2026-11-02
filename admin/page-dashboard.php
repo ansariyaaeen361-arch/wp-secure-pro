@@ -208,7 +208,7 @@ $threat_count   = $last_scan ? count($last_scan['threats'] ?? array()) : 0;
         <!-- Recent Activity -->
         <div class="swps-card swps-card-full">
             <div class="swps-card-header"><span class="dashicons dashicons-list-view"></span> Recent Activity
-                <a href="<?php echo admin_url('admin.php?page=swps-activity-log'); ?>" style="margin-left:auto;font-size:12px">View All &rarr;</a>
+                <a href="<?php echo admin_url('admin.php?page=swps-monitoring&tab=activity'); ?>" style="margin-left:auto;font-size:12px">View All &rarr;</a>
             </div>
             <div class="swps-card-body">
                 <table class="swps-table swps-table-striped">
@@ -234,7 +234,19 @@ $threat_count   = $last_scan ? count($last_scan['threats'] ?? array()) : 0;
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script>
 jQuery(function($){
-    if (typeof Chart === 'undefined') return;
+    var dashChartTries = 0;
+    function initDashCharts() {
+        if (typeof Chart === 'undefined') {
+            dashChartTries++;
+            if (dashChartTries > 50) {
+                $('#swps-trend-chart, #swps-attack-chart').each(function(){
+                    $(this).replaceWith('<p style="color:#f87171;text-align:center;padding:20px">Chart library failed to load — check your connection and refresh.</p>');
+                });
+                return;
+            }
+            setTimeout(initDashCharts, 100);
+            return;
+        }
     Chart.defaults.font.family = '-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif';
     Chart.defaults.color = '#7f8c8d';
 
@@ -268,5 +280,7 @@ jQuery(function($){
             plugins:{ legend:{ position:'right', labels:{ boxWidth:12, usePointStyle:true } } } }
     });
     <?php endif; ?>
+    } // end initDashCharts
+    initDashCharts();
 });
 </script>

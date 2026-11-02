@@ -86,41 +86,47 @@
             </form>
 
             <!-- Add trap -->
-            <div style="display:flex;gap:8px;margin-bottom:16px">
+            <div style="display:flex;gap:8px">
                 <input type="text" id="swps-hp-new-trap" placeholder="/secret-backup.zip" class="regular-text">
                 <button id="swps-hp-add" class="button button-primary">Add Trap</button>
             </div>
-
-            <h3>Active Traps</h3>
-            <div id="swps-hp-trap-list">
-            <?php foreach (SWPS_Honeypot::get_traps() as $trap): ?>
-            <div class="swps-hp-trap" style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-                <code style="flex:1">/<?php echo esc_html($trap); ?></code>
-                <button class="button button-small swps-hp-remove" data-slug="<?php echo esc_attr($trap); ?>">Remove</button>
-            </div>
-            <?php endforeach; ?>
-            </div>
         </div>
 
-        <?php if (!empty($hp_log)): ?>
-        <div class="swps-card">
-            <h2>Recent Honeypot Hits</h2>
-            <table class="swps-table widefat striped">
-                <thead><tr><th>Time</th><th>IP</th><th>Country</th><th>Trap URL</th><th>Method</th></tr></thead>
-                <tbody>
-                <?php foreach ($hp_log as $h): ?>
-                <tr>
-                    <td><?php echo human_time_diff($h['time']); ?> ago</td>
-                    <td><code><?php echo esc_html($h['ip']); ?></code></td>
-                    <td><?php echo esc_html($h['country'] ?: '—'); ?></td>
-                    <td><code>/<?php echo esc_html($h['trap']); ?></code></td>
-                    <td><span class="swps-badge swps-badge-warning"><?php echo esc_html($h['method']); ?></span></td>
-                </tr>
+        <!-- Side by side (explicit user request) instead of stacked, each
+             with its own scroll cap from the shared .swps-card rule. -->
+        <div class="swps-two-col">
+            <div class="swps-card">
+                <h2>Active Traps</h2>
+                <div id="swps-hp-trap-list" style="max-height:70vh;overflow-y:auto">
+                <?php foreach (SWPS_Honeypot::get_traps() as $trap): ?>
+                <div class="swps-hp-trap" style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+                    <code style="flex:1">/<?php echo esc_html($trap); ?></code>
+                    <button class="button button-small swps-hp-remove" data-slug="<?php echo esc_attr($trap); ?>">Remove</button>
+                </div>
                 <?php endforeach; ?>
-                </tbody>
-            </table>
+                </div>
+            </div>
+
+            <?php if (!empty($hp_log)): ?>
+            <div class="swps-card">
+                <h2>Recent Honeypot Hits</h2>
+                <table class="swps-table widefat striped">
+                    <thead><tr><th>Time</th><th>IP</th><th>Country</th><th>Trap URL</th><th>Method</th></tr></thead>
+                    <tbody>
+                    <?php foreach ($hp_log as $h): ?>
+                    <tr>
+                        <td><?php echo human_time_diff($h['time']); ?> ago</td>
+                        <td><code><?php echo esc_html($h['ip']); ?></code></td>
+                        <td><?php echo esc_html($h['country'] ?: '—'); ?></td>
+                        <td><code>/<?php echo esc_html($h['trap']); ?></code></td>
+                        <td><span class="swps-badge swps-badge-warning"><?php echo esc_html($h['method']); ?></span></td>
+                    </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+            <?php endif; ?>
         </div>
-        <?php endif; ?>
     </div>
 
     <!-- Rate Limiter Tab -->
@@ -154,7 +160,10 @@
         </div>
         <?php if (!empty($rl_stats['recent'])): ?>
         <div class="swps-card">
-            <h2>Recent Rate Limit Events</h2>
+            <div class="swps-card-header">
+                <h2 style="margin:0;border:none;padding:0">Recent Rate Limit Events</h2>
+                <button id="swps-rl-clear" class="button button-link-delete" style="margin-left:auto">Clear Log</button>
+            </div>
             <table class="swps-table widefat striped">
                 <thead><tr><th>Time</th><th>IP</th><th>Endpoint</th><th>Requests</th></tr></thead>
                 <tbody>
@@ -201,7 +210,10 @@
         </div>
         <?php if (!empty($fl_log)): ?>
         <div class="swps-card">
-            <h2>Fake Login Log</h2>
+            <div class="swps-card-header">
+                <h2 style="margin:0;border:none;padding:0">Fake Login Log</h2>
+                <button id="swps-fl-clear" class="button button-link-delete" style="margin-left:auto">Clear Log</button>
+            </div>
             <table class="swps-table widefat striped">
                 <thead><tr><th>Time</th><th>IP</th><th>Country</th><th>Type</th><th>Username Tried</th></tr></thead>
                 <tbody>
@@ -390,6 +402,8 @@ jQuery(document).ready(function($){
         $.post(ajaxurl,{action:'swps_honeypot_remove',nonce:swps_vars.nonce,slug:slug},function(r){if(r.success)location.reload();});
     });
     $('#swps-hp-clear').on('click',function(){if(!confirm('Clear honeypot log?'))return;$.post(ajaxurl,{action:'swps_honeypot_clear',nonce:swps_vars.nonce},function(r){if(r.success)location.reload();});});
+    $('#swps-fl-clear').on('click',function(){if(!confirm('Clear fake login log?'))return;$.post(ajaxurl,{action:'swps_fake_login_clear',nonce:swps_vars.nonce},function(r){if(r.success)location.reload();});});
+    $('#swps-rl-clear').on('click',function(){if(!confirm('Clear rate limit event log?'))return;$.post(ajaxurl,{action:'swps_rate_limit_clear',nonce:swps_vars.nonce},function(r){if(r.success)location.reload();});});
 
     // Reputation
     $('#swps-rep-lookup').on('click',function(){

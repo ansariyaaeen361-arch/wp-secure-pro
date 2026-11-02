@@ -20,7 +20,11 @@ $has_scan  = !empty($results);
 
 /* Cards */
 #swps-fs-page .fs-card{background:#ffffff!important;border:1px solid #e2e8f0!important;border-radius:10px!important;overflow:hidden!important;margin-bottom:18px!important;box-shadow:0 1px 3px rgba(0,0,0,.06)!important}
-#swps-fs-page .fs-card-head{background:#f8fafc!important;border-bottom:1px solid #e2e8f0!important;padding:14px 20px!important;display:flex!important;align-items:center!important;gap:10px!important}
+/* Cap height + internal scroll for long tables (Scan History, issue lists) so the whole WP admin page doesn't grow very long — a short table simply fits, so this is safe everywhere. */
+#swps-fs-page .fs-card:has(table.fs-table),
+#swps-fs-page .fs-card:has(> .fs-issue){max-height:70vh!important;overflow-y:auto!important}
+#swps-fs-page .fs-table thead th{position:sticky!important;top:0!important;z-index:1!important}
+#swps-fs-page .fs-card-head{background:#f8fafc!important;border-bottom:1px solid #e2e8f0!important;padding:14px 20px!important;display:flex!important;align-items:center!important;gap:10px!important;position:sticky!important;top:0!important;z-index:2!important}
 #swps-fs-page .fs-card-head h2{font-size:14px!important;font-weight:700!important;color:#1e293b!important}
 #swps-fs-page .fs-card-body{padding:20px!important}
 
@@ -891,23 +895,46 @@ $has_scan  = !empty($results);
         });
     });
 
+    // Fix (explicit user request): a toast alone is easy to miss, and
+    // browsing away/back via the sidebar's AJAX nav previously could show a
+    // stale cached copy of this very page after a real, successful save
+    // (see the admin-ajax.php no-cache header fix) — making a save look
+    // like it silently failed even though it hadn't. A checkmark directly
+    // on the button itself, held for a couple seconds, is unmissable and
+    // doesn't depend on a page reload to be trusted.
+    function swpsConfirmSaved($btn, failed) {
+        var orig = $btn.html();
+        $btn.prop('disabled', true).html(
+            failed
+                ? '<span class="dashicons dashicons-warning" style="font-size:14px;width:14px;height:14px;vertical-align:middle;color:#dc2626"></span> Failed'
+                : '<span class="dashicons dashicons-yes-alt" style="font-size:14px;width:14px;height:14px;vertical-align:middle;color:#16a34a"></span> Saved!'
+        );
+        setTimeout(function(){ $btn.prop('disabled', false).html(orig); }, 2000);
+    }
+
     // Scan settings
     document.getElementById('swps-scan-settings-form').addEventListener('submit',function(e){
         e.preventDefault();
+        var $btn = $(this).find('button[type=submit]');
         var enabled=Array.from(this.querySelectorAll('input[type=checkbox]:checked')).map(function(x){return x.value;});
         var allSteps=<?php echo wp_json_encode(array_keys($steps)); ?>;
         var disabled=allSteps.filter(function(s){return !enabled.includes(s);});
         $.post(ajaxurl,{action:'swps_save_scan_settings',disabled_steps:disabled,nonce:NONCE},function(res){
             toast(res.success?'Settings saved!':'Failed','info');
-        });
+            swpsConfirmSaved($btn, !res.success);
+        }).fail(function(){ toast('Request failed','error'); swpsConfirmSaved($btn, true); });
     });
 
     // Schedule
     document.getElementById('swps-schedule-form').addEventListener('submit',function(e){
         e.preventDefault();
+        var $btn = $(this).find('button[type=submit]');
         var data={action:'swps_save_scan_schedule',nonce:NONCE};
         (new FormData(this)).forEach(function(v,k){data[k]=v;});
-        $.post(ajaxurl,data,function(res){ toast(res.success?'Schedule saved!':'Failed','info'); });
+        $.post(ajaxurl,data,function(res){
+            toast(res.success?'Schedule saved!':'Failed','info');
+            swpsConfirmSaved($btn, !res.success);
+        }).fail(function(){ toast('Request failed','error'); swpsConfirmSaved($btn, true); });
     });
 
 })(jQuery);

@@ -102,14 +102,8 @@
                         <span class="description">If the same visitor triggers this many attacks within 10 minutes, their IP address is automatically blocked.</span>
                     </td>
                 </tr>
-                <tr>
-                    <th>Whitelist IPs</th>
-                    <td>
-                        <textarea name="swps_settings[waf_whitelist_ips]" rows="4" class="large-text"><?php echo esc_textarea($settings['waf_whitelist_ips'] ?? ''); ?></textarea>
-                        <p class="description">Trusted IP addresses that should never be blocked (for example, your office or your own IP). Enter one per line. These skip all firewall checks.</p>
-                    </td>
-                </tr>
             </table>
+            <p class="description">Looking for "Whitelist IPs" (trusted IPs that skip every check)? That now lives on the <a href="<?php echo esc_url( admin_url('admin.php?page=swps-access&tab=ipblocker') ); ?>">IP Blocker</a> page, alongside the rest of IP-level blocking/unblocking.</p>
             <?php submit_button('Save WAF Settings'); ?>
         </form>
     </div>

@@ -26,7 +26,8 @@ $counts   = SWPS_Activity_Log::get_counts_by_severity();
         <div class="swps-card-header">
             <span class="dashicons dashicons-filter"></span> Filter
             <form method="get" style="display:inline;float:right;">
-                <input type="hidden" name="page" value="swps-activity-log">
+                <input type="hidden" name="page" value="swps-monitoring">
+                <input type="hidden" name="tab" value="activity">
                 <select name="severity" onchange="this.form.submit()">
                     <option value="">All Severities</option>
                     <option value="critical" <?php selected($severity,'critical'); ?>>Critical</option>
@@ -71,11 +72,11 @@ $counts   = SWPS_Activity_Log::get_counts_by_severity();
             <?php if ($paged > 1 || count($logs) === $per_page): ?>
             <div class="swps-pagination">
                 <?php if ($paged > 1): ?>
-                    <a href="?page=swps-activity-log&paged=<?php echo $paged-1; ?>&severity=<?php echo $severity; ?>" class="swps-btn">← Previous</a>
+                    <a href="?page=swps-monitoring&tab=activity&paged=<?php echo $paged-1; ?>&severity=<?php echo $severity; ?>" class="swps-btn">← Previous</a>
                 <?php endif; ?>
                 <span>Page <?php echo $paged; ?></span>
                 <?php if (count($logs) === $per_page): ?>
-                    <a href="?page=swps-activity-log&paged=<?php echo $paged+1; ?>&severity=<?php echo $severity; ?>" class="swps-btn">Next →</a>
+                    <a href="?page=swps-monitoring&tab=activity&paged=<?php echo $paged+1; ?>&severity=<?php echo $severity; ?>" class="swps-btn">Next →</a>
                 <?php endif; ?>
             </div>
             <?php endif; ?>

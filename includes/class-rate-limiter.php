@@ -25,6 +25,14 @@ class SWPS_Rate_Limiter {
         add_action('rest_api_init', array(__CLASS__, 'hook_rest'));
         add_filter('preprocess_comment', array(__CLASS__, 'check_comment'));
         add_action('pre_get_posts', array(__CLASS__, 'check_search'));
+        add_action('wp_ajax_swps_rate_limit_clear', array(__CLASS__, 'ajax_clear_log'));
+    }
+
+    public static function ajax_clear_log() {
+        check_ajax_referer('swps_nonce', 'nonce');
+        if (!current_user_can('manage_options')) wp_send_json_error('Unauthorized');
+        delete_option('swps_rate_limit_log');
+        wp_send_json_success('Log cleared.');
     }
 
     /* ── Core rate-check engine ── */

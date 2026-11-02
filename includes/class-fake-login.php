@@ -14,6 +14,14 @@ class SWPS_Fake_Login {
 
         add_action('init', array(__CLASS__, 'intercept_decoy'), 1);
         add_action('wp_ajax_nopriv_swps_fake_login_submit', array(__CLASS__, 'ajax_submit'));
+        add_action('wp_ajax_swps_fake_login_clear', array(__CLASS__, 'ajax_clear_log'));
+    }
+
+    public static function ajax_clear_log() {
+        check_ajax_referer('swps_nonce', 'nonce');
+        if (!current_user_can('manage_options')) wp_send_json_error('Unauthorized');
+        delete_option(self::LOG_OPT);
+        wp_send_json_success('Log cleared.');
     }
 
     /* ── Intercept requests to the decoy URL ── */

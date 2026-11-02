@@ -20,6 +20,22 @@ class SWPS_Audit_Trail {
         add_action( 'before_delete_post',      array( __CLASS__, 'on_post_delete' ) );
         add_action( 'add_attachment',          array( __CLASS__, 'on_media_upload' ) );
         add_action( 'wp_ajax_swps_audit_export', array( __CLASS__, 'ajax_export' ) );
+        add_action( 'wp_ajax_swps_audit_clear',  array( __CLASS__, 'ajax_clear' ) );
+    }
+
+    public static function ajax_clear() {
+        check_ajax_referer( 'swps_nonce', 'nonce' );
+        if ( ! current_user_can('manage_options') ) wp_send_json_error('Unauthorized');
+        global $wpdb;
+        // DELETE, not TRUNCATE — TRUNCATE needs the DROP privilege, which
+        // isn't universally granted on shared hosting; DELETE only needs
+        // DELETE, and the result is actually checked instead of assuming
+        // success (see the same fix on Activity Log's clear earlier).
+        $result = $wpdb->query( "DELETE FROM {$wpdb->prefix}" . self::TABLE );
+        if ( $result === false ) {
+            wp_send_json_error( 'Could not clear the audit trail: ' . $wpdb->last_error );
+        }
+        wp_send_json_success( array( 'message' => 'Audit trail cleared.' ) );
     }
 
     public static function create_table() {

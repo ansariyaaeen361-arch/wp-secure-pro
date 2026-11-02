@@ -97,7 +97,22 @@ class SWPS_Scanner {
     public static function is_own_plugin_file( $path ) {
         $norm = str_replace( '\\', '/', $path );
         $base = str_replace( '\\', '/', SWPS_PLUGIN_DIR );
-        return strpos( $norm, $base ) === 0;
+        if ( strpos( $norm, $base ) === 0 ) return true;
+
+        // Fix (live false positive, confirmed via a real Full Scan alert):
+        // WordPress's own updater — including our self-hosted GitHub
+        // updater — extracts a new version into a TEMPORARY staging copy
+        // under wp-content/upgrade/plugin-update-{random}/{slug}/ before
+        // moving it into wp-content/plugins/{slug}/. A scan that runs
+        // during that brief window sees this plugin's own signature-
+        // defining files at a path that doesn't start with SWPS_PLUGIN_DIR
+        // at all, so the prefix check above never caught it — flagging our
+        // own class-malware-dna.php/class-scanner.php as "Known webshell"
+        // for literally defining those signature strings. A suffix match
+        // against the real plugin's folder name catches it at either
+        // location, staging or installed.
+        $slug_path = '/' . basename( rtrim( SWPS_PLUGIN_DIR, '/\\' ) ) . '/';
+        return strpos( $norm, $slug_path ) !== false;
     }
 
     private static function get_php_files( $dirs ) {

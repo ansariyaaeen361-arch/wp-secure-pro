@@ -20,7 +20,19 @@ if ( isset($_GET['unblock']) && check_admin_referer('swps_unblock') ) {
     echo '<div class="notice notice-success"><p>IP <strong>' . esc_html($ip) . '</strong> has been unblocked.</p></div>';
 }
 
+// Handle whitelist save — moved here from the WAF settings page since this
+// is where every other IP-level action (block/unblock) already lives.
+// Merges into swps_settings instead of overwriting it, same as every other
+// single-field settings form in this plugin.
+if ( isset($_POST['swps_save_whitelist']) && check_admin_referer('swps_whitelist_nonce') ) {
+    $existing = get_option('swps_settings', array());
+    $existing['waf_whitelist_ips'] = sanitize_textarea_field( wp_unslash( $_POST['waf_whitelist_ips'] ?? '' ) );
+    update_option('swps_settings', $existing);
+    echo '<div class="notice notice-success"><p>Whitelist saved.</p></div>';
+}
+
 $blocked = SWPS_IP_Blocker::get_blocked_ips();
+$wl_settings = get_option('swps_settings', array());
 ?>
 <div class="wrap swps-wrap">
     <div class="swps-header">
@@ -100,7 +112,7 @@ $blocked = SWPS_IP_Blocker::get_blocked_ips();
                         <td><?php echo esc_html($b->blocked_at); ?></td>
                         <td><?php echo $b->expires_at ? esc_html($b->expires_at) : '<span class="swps-badge swps-badge-danger">Permanent</span>'; ?></td>
                         <td>
-                            <a href="<?php echo wp_nonce_url(admin_url('admin.php?page=swps-ip-blocker&unblock=' . urlencode($b->ip_address)), 'swps_unblock'); ?>"
+                            <a href="<?php echo wp_nonce_url(admin_url('admin.php?page=swps-access&tab=ipblocker&unblock=' . urlencode($b->ip_address)), 'swps_unblock'); ?>"
                                class="swps-btn-sm swps-btn-ok"
                                onclick="return confirm('Unblock <?php echo esc_attr($b->ip_address); ?>?')">Unblock</a>
                         </td>
