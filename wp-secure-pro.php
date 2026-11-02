@@ -570,6 +570,26 @@ function swps_ajax_fim_toggle() {
     wp_send_json_success( array('enabled' => $enabled) );
 }
 
+add_action( 'wp_ajax_swps_factory_reset', 'swps_ajax_factory_reset' );
+function swps_ajax_factory_reset() {
+    check_ajax_referer( 'swps_nonce', 'nonce' );
+    if ( ! current_user_can('manage_options') ) wp_send_json_error('Unauthorized');
+
+    // Server-side confirmation, not just a JS confirm() dialog — the admin
+    // must send back the exact site domain, matching what the page asked
+    // them to type. This is deliberately not just "do you confirm? yes/no";
+    // typing the domain forces a deliberate pause before an action with no
+    // undo (all settings, logs, blocked IPs, quarantine and baselines gone).
+    $typed  = sanitize_text_field( wp_unslash( $_POST['confirm_domain'] ?? '' ) );
+    $domain = parse_url( home_url(), PHP_URL_HOST );
+    if ( ! $typed || strtolower( $typed ) !== strtolower( $domain ) ) {
+        wp_send_json_error( 'Domain did not match — nothing was deleted.' );
+    }
+
+    SWPS_DB::factory_reset();
+    wp_send_json_success( array( 'message' => 'All WP Secure Pro data has been deleted. The site is back to a fresh-install state.' ) );
+}
+
 add_action( 'wp_ajax_swps_reset_known_admins', 'swps_ajax_reset_known_admins' );
 function swps_ajax_reset_known_admins() {
     check_ajax_referer( 'swps_nonce', 'nonce' );
@@ -707,6 +727,7 @@ function swps_group_settings_tabs() {
     return array(
         'general'  => array( 'label' => 'Settings', 'file' => 'admin/page-settings.php' ),
         'advanced' => array( 'label' => 'Advanced', 'file' => 'admin/page-advanced-settings.php' ),
+        'reset'    => array( 'label' => '⚠️ Reset & Delete Data', 'file' => 'admin/page-reset.php' ),
     );
 }
 function swps_group_settings_page() {

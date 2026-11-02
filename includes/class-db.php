@@ -180,4 +180,69 @@ class SWPS_DB {
     public static function deactivate() {
         wp_clear_scheduled_hook( 'swps_daily_scan' );
     }
+
+    /**
+     * Full factory reset — wipes every trace of this plugin's data so the
+     * site looks exactly like the moment it was first installed, without
+     * actually deactivating/removing the plugin itself. Deliberately
+     * thorough rather than guessing at a curated list: options and user
+     * meta are matched by their 'swps_' prefix directly in the database
+     * (the same prefix every setting, log, baseline and cache this plugin
+     * has ever written uses), not by hand-maintaining a list of option
+     * names that would silently go stale as new features are added.
+     */
+    public static function factory_reset() {
+        global $wpdb;
+
+        // 1. Every wp_options row this plugin owns — settings, all the
+        //    *_log/*_baseline/*_last_* option-stored data, transients
+        //    (both the value and its _transient_timeout_ companion).
+        $wpdb->query( "DELETE FROM {$wpdb->options} WHERE option_name LIKE 'swps\\_%' OR option_name LIKE '\\_transient\\_swps\\_%' OR option_name LIKE '\\_transient\\_timeout\\_swps\\_%'" );
+
+        // 2. Per-user 2FA secret/method — security config tied to the
+        //    plugin, not to the WordPress user account itself.
+        $wpdb->query( "DELETE FROM {$wpdb->usermeta} WHERE meta_key LIKE '\\_swps\\_%'" );
+
+        // 3. Custom tables — TRUNCATE instead of DROP so the schema stays
+        //    intact (no need to re-run CREATE TABLE / dbDelta right after).
+        foreach ( array( 'swps_activity_log', 'swps_blocked_ips', 'swps_login_attempts' ) as $table ) {
+            $wpdb->query( "TRUNCATE TABLE {$wpdb->prefix}{$table}" );
+        }
+
+        // 4. Filesystem artifacts this plugin writes outside the database —
+        //    quarantined files, the cached GeoIP database, exported SIEM
+        //    logs. Each path is removed only if it exists; a host where one
+        //    of these was never created is not an error.
+        $paths = array(
+            dirname( rtrim( ABSPATH, '/\\' ) ) . '/swps-quarantine/', // outside-webroot quarantine
+            WP_CONTENT_DIR . '/swps-quarantine/',                     // in-webroot fallback
+            WP_CONTENT_DIR . '/swps-geoip/',
+            WP_CONTENT_DIR . '/swps-siem-logs/',
+        );
+        foreach ( $paths as $path ) {
+            if ( is_dir( $path ) ) self::rrmdir( $path );
+        }
+
+        // 5. Scheduled events — every cron hook this plugin has registered.
+        foreach ( array( 'swps_daily_scan', 'swps_hourly_check', 'swps_scheduled_full_scan', 'swps_weekly_digest' ) as $hook ) {
+            wp_clear_scheduled_hook( $hook );
+        }
+
+        // 6. Re-seed exactly as a brand-new activation would, so the site
+        //    is immediately usable afterward rather than left in a
+        //    half-configured state until the next page load happens to
+        //    trigger maybe_apply_defaults().
+        self::apply_default_options();
+    }
+
+    private static function rrmdir( $dir ) {
+        $items = @scandir( $dir );
+        if ( $items === false ) return;
+        foreach ( $items as $item ) {
+            if ( $item === '.' || $item === '..' ) continue;
+            $path = $dir . '/' . $item;
+            is_dir( $path ) ? self::rrmdir( $path ) : @unlink( $path );
+        }
+        @rmdir( $dir );
+    }
 }
