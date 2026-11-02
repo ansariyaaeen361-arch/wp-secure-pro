@@ -166,6 +166,18 @@ class SWPS_Two_Factor {
         return $sent;
     }
 
+    /** "yaseen.mevteck@gmail.com" -> "yas.......@gmail.com" — enough to
+     *  jog memory of which inbox 2FA was configured with, not enough to
+     *  identify the full address to someone who only has valid credentials. */
+    private static function mask_email( $email ) {
+        if ( ! is_email( $email ) ) return '';
+        list( $local, $domain ) = explode( '@', $email, 2 );
+        $visible = min( 3, max( 1, strlen( $local ) - 1 ) );
+        $prefix  = substr( $local, 0, $visible );
+        $dots    = str_repeat( '.', max( 3, min( 7, strlen( $local ) - $visible ) ) );
+        return $prefix . $dots . '@' . $domain;
+    }
+
     public static function verify_email_otp( $user_id, $code ) {
         $key   = self::OTP_TRANSIENT . $user_id;
         $hash  = get_transient( $key );
@@ -315,7 +327,18 @@ class SWPS_Two_Factor {
                 <?php if ( $method === 'totp' ) : ?>
                     Enter the 6-digit code from your <strong>Google Authenticator</strong> app.
                 <?php else : ?>
-                    A verification code has been sent to your email address.<br>Enter it below to complete login.
+                    A verification code has been sent to your email address<?php
+                    // Fix (explicit user request): a masked hint of WHICH
+                    // email the OTP went to — easy to forget which address
+                    // 2FA was configured with, especially across many
+                    // managed sites. Masked (not shown in full) since this
+                    // page is reachable by anyone who knows a valid
+                    // username/password, before 2FA itself is satisfied.
+                    $hint_user = $user_id ? get_user_by( 'ID', $user_id ) : false;
+                    if ( $hint_user && $hint_user->user_email ) {
+                        echo ' (' . esc_html( self::mask_email( $hint_user->user_email ) ) . ')';
+                    }
+                    ?>.<br>Enter it below to complete login.
                 <?php endif; ?>
             </p>
             <form method="post">
