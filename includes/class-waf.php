@@ -63,21 +63,20 @@ class SWPS_WAF {
     );
 
     // Bad bots / user agents
-    // Fix: 'python-requests', 'curl/', 'wget/' and 'go-http-client' used to
-    // be in this list — those aren't attack tools, they're the default
-    // User-Agent of generic HTTP client libraries that any legitimate
-    // automation (a cron job, a Zapier/n8n flow, a custom integration using
-    // an Application Password) is just as likely to use as an attacker is.
-    // Blocking them broke real automation/REST API use with no way to
-    // "unblock" short of changing the client's User-Agent, while giving an
-    // actual attacker nothing they couldn't trivially bypass by spoofing a
-    // browser UA anyway. Every signature kept below is a named security
-    // tool with no legitimate reason to ever hit a production site.
+    // 'python-requests', 'curl/', 'wget/' and 'go-http-client' are back in
+    // this list — real attacker tools AND legitimate automation can both
+    // show up with these generic HTTP-client User-Agents, so the fix for
+    // the false-positive problem isn't removing the signal, it's making a
+    // trusted caller skip this check entirely: see the Whitelist IPs
+    // exemption at the top of run() below. Add an automation's IP there
+    // once and it's never touched by this list again — no need to keep
+    // unblocking it by hand.
     private static $bad_bots = array(
         'sqlmap', 'nikto', 'nmap', 'masscan', 'zgrab',
         'dirbuster', 'gobuster', 'wfuzz', 'burpsuite',
         'acunetix', 'nessus', 'openvas', 'w3af',
         'havij', 'pangolin', 'safe3', 'libwww-perl',
+        'python-requests', 'curl/', 'wget/', 'go-http-client',
         'scrapy', 'phantomjs', 'headless', 'metasploit',
         'commix', 'dropbear',
     );
@@ -127,6 +126,16 @@ class SWPS_WAF {
         if ( is_user_logged_in() && current_user_can('manage_options') ) return;
 
         $ip = SWPS_Login_Protection::get_client_ip();
+
+        // Fix: the "Whitelist IPs" field on the WAF settings page has
+        // always claimed "these skip all firewall checks" — but nothing in
+        // this file ever actually read that setting, so a whitelisted IP
+        // was still fully subject to the bad-bot/SQLi/XSS/LFI/RFI checks
+        // below (only Rate Limiter respected it). This is the real fix for
+        // "my own automation's IP keeps getting blocked": add its IP here
+        // once, and every check in this method — including the bad-bot UA
+        // list — is skipped for it from then on.
+        if ( class_exists('SWPS_IP_Blocker') && SWPS_IP_Blocker::is_whitelisted( $ip ) ) return;
 
         // 1. Check blocked IP first (fastest check)
         if ( SWPS_IP_Blocker::is_blocked( $ip ) ) {

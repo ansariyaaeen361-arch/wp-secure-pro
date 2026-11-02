@@ -11,6 +11,11 @@ class SWPS_IP_Blocker {
     public static function check_current_ip() {
         if ( is_admin() ) return; // Don't block admin panel access here
         $ip = SWPS_Login_Protection::get_client_ip();
+        // A whitelisted IP added AFTER it was already blocked (the exact
+        // "unblock my automation once, then trust it so it never happens
+        // again" flow) must regain access immediately — not stay locked out
+        // until that old block entry separately expires or is removed.
+        if ( self::is_whitelisted( $ip ) ) return;
         if ( self::is_blocked( $ip ) ) {
             status_header( 403 );
             die( '<h1>403 Forbidden</h1><p>Your IP address has been blocked. Contact the site administrator.</p>' );

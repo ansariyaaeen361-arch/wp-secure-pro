@@ -36,9 +36,14 @@ class SWPS_Honeypot {
 
     /* ── Main interceptor — runs on every request ── */
     public static function intercept_traps() {
+        $ip = SWPS_IP_Blocker::get_ip();
+        // Same "Whitelist IPs skip all firewall checks" promise as WAF — a
+        // trusted automation hitting a coincidentally trap-shaped URL (rare,
+        // but possible) shouldn't get auto-blocked for it.
+        if ( class_exists('SWPS_IP_Blocker') && SWPS_IP_Blocker::is_whitelisted( $ip ) ) return;
+
         $traps    = self::get_traps();
         $uri      = ltrim(parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?: '', '/');
-        $ip       = SWPS_IP_Blocker::get_ip();
         $settings = get_option('swps_settings', array());
 
         foreach ($traps as $trap) {

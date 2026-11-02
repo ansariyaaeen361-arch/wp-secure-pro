@@ -25,6 +25,7 @@ class SWPS_Login_Protection {
 
     public static function check_ip_blocked( $user, $username, $password ) {
         $ip = self::get_client_ip();
+        if ( SWPS_IP_Blocker::is_whitelisted( $ip ) ) return $user;
         if ( SWPS_IP_Blocker::is_blocked( $ip ) ) {
             SWPS_Activity_Log::add( 'blocked_ip_login', 'warning', "Blocked IP tried to login: $ip (user: $username)" );
             return new WP_Error( 'ip_blocked', '<strong>Error:</strong> Your IP address has been blocked due to too many failed login attempts. Please try again later.' );
@@ -34,6 +35,7 @@ class SWPS_Login_Protection {
 
     public static function check_login_attempts() {
         $ip       = self::get_client_ip();
+        if ( SWPS_IP_Blocker::is_whitelisted( $ip ) ) return;
         $settings = get_option( 'swps_settings', array() );
         $max      = intval( $settings['max_login_attempts'] ?? 5 );
         $duration = intval( $settings['lockout_duration'] ?? 30 );
