@@ -87,34 +87,16 @@ class SWPS_Honeypot {
         if (count($log) > 500) $log = array_slice($log, -500);
         update_option(self::LOG_OPT, $log, false);
 
-        // Fix (explicit, repeated user complaint — real inbox evidence: 50+
+        // Fix (explicit, repeated user decision — real inbox evidence: 50+
         // emails in under 24h, almost all for /xmlrpc.php and /.env* probes,
         // which every automated internet-wide bot scanner hits on literally
-        // every WordPress site constantly, attacker or not): this used to
-        // email on EVERY single trap hit, with no throttle at all. Blocking
-        // and logging the hit stays fully real-time (unchanged above/below)
-        // — only the EMAIL is now throttled, to at most one every 30
-        // minutes, and that one email summarizes every hit (count + distinct
-        // IPs) since the last email instead of losing the rest silently.
-        if (class_exists('SWPS_Notifications')) {
-            $cooldown_key = 'swps_honeypot_email_cooldown';
-            if (! get_transient($cooldown_key)) {
-                set_transient($cooldown_key, time(), 30 * MINUTE_IN_SECONDS);
-                $last_sent = get_option('swps_honeypot_last_email_at', 0);
-                $since = array_filter($log, fn($e) => $e['time'] > $last_sent);
-                $count = count($since);
-                $ips   = array_unique(array_column($since, 'ip'));
-                $body  = $count > 1
-                    ? "**$count honeypot hit(s)** from " . count($ips) . " IP(s) since the last alert — most recent:\n\n"
-                        . "**IP:** $ip\n**URL:** /{$uri}\n**Trap:** /{$trap}\n\n"
-                        . "(Further hits in the next 30 minutes are logged and auto-blocked as usual, but won't each trigger a separate email — check Monitoring & Logs for the full list.)"
-                    : "**IP:** $ip\n**URL:** /{$uri}\n**Trap:** /{$trap}";
-
-                $notify = SWPS_Notifications::get_instance();
-                $notify->send( 'honeypot_triggered', 'Honeypot Triggered', $body, 'critical' );
-                update_option('swps_honeypot_last_email_at', time(), false);
-            }
-        }
+        // every WordPress site constantly, attacker or not): a honeypot hit
+        // is low-signal noise, not something worth interrupting an inbox
+        // for. No email is sent here anymore — the hit is still fully
+        // real-time logged (above), auto-blocked (below), reported to the
+        // threat feed and scored into IP reputation, exactly as before.
+        // Anyone who wants to review activity does it from Monitoring &
+        // Logs / the Honeypot page's own log, not email.
 
         SWPS_Audit_Trail::log('honeypot_triggered', 'honeypot', '', "/$trap", "IP: $ip — URI: /$uri");
 
