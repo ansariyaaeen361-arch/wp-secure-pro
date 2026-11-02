@@ -279,7 +279,7 @@ class SWPS_WAF {
             if ( ! $already_blocked ) {
                 SWPS_Notifications::get_instance()->send(
                     'waf_auto_block',
-                    'SecureWP Shield: IP Auto-Blocked',
+                    'WP Secure Pro: IP Auto-Blocked',
                     "IP $ip was automatically blocked after $recent malicious requests in 10 minutes.\nLast reason: $reason",
                     'critical'
                 );

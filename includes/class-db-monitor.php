@@ -50,7 +50,7 @@ class SWPS_DB_Monitor {
                 . ( $quarantined ? ' — automatically quarantined.' : ' — COULD NOT quarantine automatically, remove it manually right away.' )
             );
             SWPS_Email_Alerts::send_alert(
-                'SecureWP Shield: PHP file found in uploads folder' . ( $quarantined ? ' (auto-quarantined)' : ' — ACTION NEEDED' ),
+                'WP Secure Pro: PHP file found in uploads folder' . ( $quarantined ? ' (auto-quarantined)' : ' — ACTION NEEDED' ),
                 "A PHP file was found in your uploads directory, where no PHP file should ever legitimately be:\n\n$file\n\n"
                 . ( $quarantined
                     ? "It has been automatically moved out of the webroot and can no longer run."
@@ -92,7 +92,7 @@ class SWPS_DB_Monitor {
         foreach ( $new_users as $user ) {
             SWPS_Activity_Log::add( 'rogue_db_user', 'critical', "Unknown MySQL user detected: $user" );
             SWPS_Email_Alerts::send_alert(
-                'SecureWP Shield: Unknown Database User Detected',
+                'WP Secure Pro: Unknown Database User Detected',
                 "A new MySQL user was detected: $user\n\nThis may indicate a database compromise. Please investigate immediately."
             );
         }

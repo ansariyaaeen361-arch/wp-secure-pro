@@ -630,7 +630,7 @@ class SWPS_File_Integrity {
 
             if ( $critical_count > 0 ) {
                 SWPS_Email_Alerts::send_alert(
-                    'SecureWP Shield: Critical File Changes Detected',
+                    'WP Secure Pro: Critical File Changes Detected',
                     "$critical_count critical file(s) changed on your site.\n\nThis may indicate a hack or malware injection.\n\nFiles:\n" .
                     implode("\n", array_map( fn($c) => "- [{$c['type']}] {$c['file']}", array_filter($changes, fn($c) => $c['severity']==='critical') ))
                 );

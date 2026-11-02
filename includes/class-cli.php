@@ -3,7 +3,7 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 if ( ! defined('WP_CLI') || ! WP_CLI ) return;
 
 /**
- * SecureWP Shield WP-CLI commands.
+ * WP Secure Pro WP-CLI commands.
  * Usage: wp swps <command>
  */
 class SWPS_CLI {
@@ -14,7 +14,7 @@ class SWPS_CLI {
      *   wp swps scan
      */
     public function scan( $args, $assoc ) {
-        WP_CLI::log('Running SecureWP Shield malware scan...');
+        WP_CLI::log('Running WP Secure Pro malware scan...');
         $results = SWPS_Scanner::run_scan();
         $threats = $results['threats'] ?? array();
         if (empty($threats)) {

@@ -24,10 +24,10 @@ class SWPS_SSL_Monitor {
 
             if ( $days <= 0 ) {
                 SWPS_Activity_Log::add( 'ssl_expired', 'critical', "SSL certificate has EXPIRED on $host!" );
-                SWPS_Notifications::send( 'ssl_expired', 'SecureWP Shield: SSL Certificate EXPIRED', "Your SSL certificate on $host has expired! Visitors will see security warnings.", 'critical' );
+                SWPS_Notifications::send( 'ssl_expired', 'WP Secure Pro: SSL Certificate EXPIRED', "Your SSL certificate on $host has expired! Visitors will see security warnings.", 'critical' );
             } elseif ( $days <= $alerts ) {
                 SWPS_Activity_Log::add( 'ssl_expiring', 'warning', "SSL certificate expiring in $days days on $host" );
-                SWPS_Notifications::send( 'ssl_expiring', "SecureWP Shield: SSL Expiring in $days Days", "Your SSL certificate on $host will expire in $days days. Renew it now.", 'warning' );
+                SWPS_Notifications::send( 'ssl_expiring', "WP Secure Pro: SSL Expiring in $days Days", "Your SSL certificate on $host will expire in $days days. Renew it now.", 'warning' );
             }
         }
 

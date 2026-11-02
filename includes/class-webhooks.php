@@ -30,7 +30,7 @@ class SWPS_Webhooks {
             'timestamp'  => time(),
             'datetime'   => date_i18n('Y-m-d H:i:s'),
             'data'       => $data,
-            'plugin'     => 'SecureWP Shield v' . SWPS_VERSION,
+            'plugin'     => 'WP Secure Pro v' . SWPS_VERSION,
         );
 
         $secret = $settings['webhook_secret'] ?? '';
@@ -57,7 +57,7 @@ class SWPS_Webhooks {
         if ( ! current_user_can('manage_options') ) wp_send_json_error('Unauthorized');
 
         self::send('test', array(
-            'message' => 'This is a test webhook from SecureWP Shield.',
+            'message' => 'This is a test webhook from WP Secure Pro.',
             'admin'   => wp_get_current_user()->user_login,
         ) );
 

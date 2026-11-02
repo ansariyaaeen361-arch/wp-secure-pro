@@ -167,7 +167,7 @@ class SWPS_DB {
      */
     private static function purge_page_cache_plugins() {
         if ( has_action( 'litespeed_purge_all' ) ) {
-            do_action( 'litespeed_purge_all', 'SecureWP Shield updated to ' . SWPS_VERSION );
+            do_action( 'litespeed_purge_all', 'WP Secure Pro updated to ' . SWPS_VERSION );
         }
         if ( class_exists( '\LiteSpeed\Purge' ) && method_exists( '\LiteSpeed\Purge', 'purge_all' ) ) {
             \LiteSpeed\Purge::purge_all();

@@ -46,7 +46,7 @@ class SWPS_Multisite_Monitor {
             header( 'X-LiteSpeed-Cache-Control: no-cache' );
         }
         if ( has_action( 'litespeed_control_set_nocache' ) ) {
-            do_action( 'litespeed_control_set_nocache', 'SecureWP Shield: dynamic threat/hub data' );
+            do_action( 'litespeed_control_set_nocache', 'WP Secure Pro: dynamic threat/hub data' );
         }
     }
 

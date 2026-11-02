@@ -49,7 +49,7 @@ class SWPS_Admin_Monitor {
                     "Site URL  : " . get_site_url() . "\n\n" .
                     "If you did NOT create this user, delete it immediately:\n" .
                     admin_url('users.php') . "\n\n" .
-                    "This alert was sent by SecureWP Shield."
+                    "This alert was sent by WP Secure Pro."
                 );
             }
         }
@@ -114,7 +114,7 @@ class SWPS_Admin_Monitor {
 
             SWPS_Email_Alerts::send_alert(
                 'CRITICAL: Unknown Admin User Found - ' . get_bloginfo('name'),
-                "SecureWP Shield detected an UNKNOWN ADMINISTRATOR on your site!\n\n" .
+                "WP Secure Pro detected an UNKNOWN ADMINISTRATOR on your site!\n\n" .
                 "This user was NOT created through the normal WordPress process.\n" .
                 "This is a sign of a hack or database injection attack.\n\n" .
                 "Username  : {$user->user_login}\n" .

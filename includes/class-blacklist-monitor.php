@@ -26,7 +26,7 @@ class SWPS_Blacklist_Monitor {
             if ( ! empty( $data['listed'] ) ) {
                 SWPS_Activity_Log::add( 'blacklist_found', 'critical', "Site blacklisted on: $service" );
                 SWPS_Email_Alerts::send_alert(
-                    'SecureWP Shield: Site is Blacklisted!',
+                    'WP Secure Pro: Site is Blacklisted!',
                     "Your site has been flagged by $service as unsafe.\n\nCheck the Security Scanner > Blacklist Monitor section for details."
                 );
             }
@@ -68,7 +68,7 @@ class SWPS_Blacklist_Monitor {
         }
 
         $body     = json_encode( array(
-            'client'     => array( 'clientId' => 'securewp-shield', 'clientVersion' => SWPS_VERSION ),
+            'client'     => array( 'clientId' => 'wp-secure-pro', 'clientVersion' => SWPS_VERSION ),
             'threatInfo' => array(
                 'threatTypes'      => array('MALWARE','SOCIAL_ENGINEERING','UNWANTED_SOFTWARE'),
                 'platformTypes'    => array('ANY_PLATFORM'),

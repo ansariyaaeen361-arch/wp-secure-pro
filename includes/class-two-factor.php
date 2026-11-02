@@ -383,7 +383,7 @@ class SWPS_Two_Factor {
         $secret  = get_user_meta( $user->ID, self::META_SECRET,  true );
         if ( ! $secret ) $secret = self::generate_secret();
         ?>
-        <h2>Two-Factor Authentication (2FA) — SecureWP Shield</h2>
+        <h2>Two-Factor Authentication (2FA) — WP Secure Pro</h2>
         <table class="form-table">
             <tr>
                 <th>Enable 2FA</th>

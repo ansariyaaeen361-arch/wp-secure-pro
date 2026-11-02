@@ -92,7 +92,7 @@ a{color:#1a56a8}
 </style></head><body>
 <div class='wrap'>
 <div class='header'>
-    <h1>🛡 SecureWP Shield</h1>
+    <h1>🛡 WP Secure Pro</h1>
     <p>Security Report — $since_label — $name</p>
 </div>
 <div class='status-bar'>$status_label</div>
@@ -136,12 +136,12 @@ a{color:#1a56a8}
 
         $html .= "<p style='text-align:center;margin-top:20px'><a href='" . admin_url('admin.php?page=swps-dashboard') . "' style='background:#1a56a8;color:#fff;padding:10px 24px;border-radius:6px;text-decoration:none;font-weight:700'>View Full Dashboard</a></p>
 </div>
-<div class='footer'>SecureWP Shield v" . SWPS_VERSION . " &nbsp;|&nbsp; <a href='$site'>$site</a> &nbsp;|&nbsp; " . date_i18n('F j, Y') . "</div>
+<div class='footer'>WP Secure Pro v" . SWPS_VERSION . " &nbsp;|&nbsp; <a href='$site'>$site</a> &nbsp;|&nbsp; " . date_i18n('F j, Y') . "</div>
 </div></body></html>";
 
         wp_mail(
             $email,
-            "[SecureWP Shield] $since_label Security Digest — $name ($status_label)",
+            "[WP Secure Pro] $since_label Security Digest — $name ($status_label)",
             $html,
             array('Content-Type: text/html; charset=UTF-8')
         );

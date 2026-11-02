@@ -10,7 +10,7 @@ class SWPS_Dashboard_Widget {
     public static function register() {
         wp_add_dashboard_widget(
             'swps_security_overview',
-            '🛡 SecureWP Shield — Security Overview',
+            '🛡 WP Secure Pro — Security Overview',
             array( __CLASS__, 'render' )
         );
     }

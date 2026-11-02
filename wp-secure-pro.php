@@ -1,13 +1,13 @@
 <?php
 /**
- * Plugin Name: SecureWP Shield
+ * Plugin Name: WP Secure Pro
  * Plugin URI:  https://yoursite.com
  * Description: Enterprise WordPress Security Suite — WAF, 2FA, Full Site Scan, Core Repair, Honeypot, Rate Limiter, Challenge Page, DNA Scanner, Canary Tokens, IP Reputation, SIEM, Multi-Site Monitor, Threat Feed Server
  * Version:     2.0.0
  * Author:      Yaseen
  * Author URI:  https://yoursite.com
- * Text Domain: securewp-shield
- * Update URI:  https://github.com/ansariyaaeen361-arch/securewp-shield
+ * Text Domain: wp-secure-pro
+ * Update URI:  https://github.com/ansariyaaeen361-arch/wp-secure-pro
  */
 
 if ( ! defined( 'ABSPATH' ) ) exit;
@@ -19,6 +19,33 @@ define( 'SWPS_PLUGIN_URL',  plugin_dir_url( __FILE__ ) );
 define( 'SWPS_TABLE_LOG',   'swps_activity_log' );
 define( 'SWPS_TABLE_IPS',   'swps_blocked_ips' );
 define( 'SWPS_TABLE_LOGINS','swps_login_attempts' );
+
+/**
+ * Brand logo — a shield-and-checkmark mark matching the plugin's
+ * existing primary blue (#1a56a8). $mono outputs a flat black silhouette
+ * (no gradient/stroke-width finesse) sized for the ~20px WordPress admin
+ * menu icon slot, which only ever shows a single-color icon.
+ */
+function swps_brand_logo_svg( $size = 40, $mono = false ) {
+    if ( $mono ) {
+        return '<svg width="' . $size . '" height="' . $size . '" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">'
+            . '<path fill="#9ea3a8" d="M24 3 7 9.5v9.8C7 30.6 14 39 24 41.5 34 39 41 30.6 41 19.3V9.5L24 3z"/>'
+            . '<path fill="none" stroke="#1d2327" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round" d="M16 24.5l5.3 5.3L32.5 18"/>'
+            . '</svg>';
+    }
+    return '<svg width="' . $size . '" height="' . $size . '" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">'
+        . '<defs><linearGradient id="wspLogoGrad" x1="4" y1="3" x2="44" y2="44" gradientUnits="userSpaceOnUse">'
+        . '<stop stop-color="#3b82c4"/><stop offset="1" stop-color="#143f82"/></linearGradient></defs>'
+        . '<path d="M24 3 7 9.5v9.8C7 30.6 14 39 24 41.5 34 39 41 30.6 41 19.3V9.5L24 3z" fill="url(#wspLogoGrad)"/>'
+        . '<path d="M24 3 7 9.5v9.8C7 30.6 14 39 24 41.5V3z" fill="#ffffff" fill-opacity="0.07"/>'
+        . '<path d="M16 24.5l5.3 5.3L32.5 18" stroke="#ffffff" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>'
+        . '</svg>';
+}
+
+/** Base64 data: URI — the format add_menu_page()'s $icon_url expects. */
+function swps_brand_logo_data_uri() {
+    return 'data:image/svg+xml;base64,' . base64_encode( swps_brand_logo_svg( 20, true ) );
+}
 
 // ─── Core classes (order matters — later classes depend on earlier) ────────────
 require_once SWPS_PLUGIN_DIR . 'includes/class-db.php';
@@ -235,19 +262,19 @@ function swps_send_no_cache_headers() {
     nocache_headers(); // WordPress's own standard no-cache header set
     header( 'X-LiteSpeed-Cache-Control: no-cache' );
     if ( has_action( 'litespeed_control_set_nocache' ) ) {
-        do_action( 'litespeed_control_set_nocache', 'SecureWP Shield admin page' );
+        do_action( 'litespeed_control_set_nocache', 'WP Secure Pro admin page' );
     }
 }
 
 add_action( 'admin_menu', 'swps_admin_menu' );
 function swps_admin_menu() {
     $wl       = get_option('swps_white_label', array());
-    $menu_name = ( ! empty($wl['enabled']) && ! empty($wl['menu_name']) ) ? $wl['menu_name'] : 'SecureWP Shield';
+    $menu_name = ( ! empty($wl['enabled']) && ! empty($wl['menu_name']) ) ? $wl['menu_name'] : 'WP Secure Pro';
 
     add_menu_page(
         $menu_name, $menu_name, 'manage_options',
         'swps-dashboard', 'swps_shell_dashboard',
-        'dashicons-shield', 2
+        swps_brand_logo_data_uri(), 2
     );
 
     // ── Visible sidebar (9 items) — everything else below is grouped under

@@ -172,7 +172,7 @@ class SWPS_Threat_Feed_Server {
         // this endpoint despite the headers above. Its documented API for
         // "don't cache this response" is this action, not a header.
         if ( has_action( 'litespeed_control_set_nocache' ) ) {
-            do_action( 'litespeed_control_set_nocache', 'SecureWP Shield: dynamic threat/hub data' );
+            do_action( 'litespeed_control_set_nocache', 'WP Secure Pro: dynamic threat/hub data' );
         }
     }
 
@@ -197,7 +197,7 @@ class SWPS_Threat_Feed_Server {
         if (!$feed) $feed = self::build_feed();
 
         $lines = array(
-            '# SecureWP Shield Threat Feed',
+            '# WP Secure Pro Threat Feed',
             '# Site: ' . get_site_url(),
             '# Generated: ' . date('Y-m-d H:i:s', $feed['generated']),
             '# Entries: ' . $feed['count'],

@@ -11,8 +11,8 @@ class SWPS_White_Label {
         add_action( 'admin_menu',           array( __CLASS__, 'rename_menu' ), 9999 );
         add_action( 'admin_bar_menu',       array( __CLASS__, 'rename_admin_bar' ), 9999 );
         add_action( 'admin_enqueue_scripts',array( __CLASS__, 'custom_branding_css' ) );
-        add_filter( 'update_plugins_securewp-shield/securewp-shield.php', '__return_false' );
-        add_filter( 'plugin_action_links_securewp-shield/securewp-shield.php', array( __CLASS__, 'remove_settings_link' ) );
+        add_filter( 'update_plugins_wp-secure-pro/wp-secure-pro.php', '__return_false' );
+        add_filter( 'plugin_action_links_wp-secure-pro/wp-secure-pro.php', array( __CLASS__, 'remove_settings_link' ) );
     }
 
     private static function get( $key, $default = '' ) {
@@ -22,7 +22,7 @@ class SWPS_White_Label {
 
     public static function hide_in_plugin_list( $plugins ) {
         if ( ! self::get('hide_plugin') ) return $plugins;
-        unset( $plugins['securewp-shield/securewp-shield.php'] );
+        unset( $plugins['wp-secure-pro/wp-secure-pro.php'] );
         return $plugins;
     }
 
@@ -81,7 +81,7 @@ class SWPS_White_Label {
     /* ---- Client report generation ---- */
 
     public static function generate_report() {
-        $brand   = self::get('company_name', 'SecureWP Shield');
+        $brand   = self::get('company_name', 'WP Secure Pro');
         $logo    = self::get('logo_url');
         $scan    = get_option('swps_last_scan', array());
         $vuln    = get_option('swps_last_vuln_scan', array());

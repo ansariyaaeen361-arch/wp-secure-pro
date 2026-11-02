@@ -29,14 +29,14 @@ class SWPS_Email_Alerts {
 
         $headers = array(
             'Content-Type: text/plain; charset=UTF-8',
-            'From: SecureWP Shield <' . get_option('admin_email') . '>',
+            'From: WP Secure Pro <' . get_option('admin_email') . '>',
         );
 
-        $full_body = "=== SecureWP Shield Security Alert ===\n\n" .
+        $full_body = "=== WP Secure Pro Security Alert ===\n\n" .
                      $body .
-                     "\n\n---\nSecureWP Shield - " . get_bloginfo('name') . "\n" . get_site_url() .
+                     "\n\n---\nWP Secure Pro - " . get_bloginfo('name') . "\n" . get_site_url() .
                      "\nAlert sent: " . current_time('mysql');
 
-        wp_mail( $to, '[SecureWP] ' . $subject, $full_body, $headers );
+        wp_mail( $to, '[WP Secure Pro] ' . $subject, $full_body, $headers );
     }
 }

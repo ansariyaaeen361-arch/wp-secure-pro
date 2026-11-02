@@ -21,8 +21,8 @@ if ( isset($_POST['swps_save_settings']) && check_admin_referer('swps_settings_n
 // Test email
 if ( isset($_POST['swps_test_email']) && check_admin_referer('swps_settings_nonce') ) {
     SWPS_Email_Alerts::send_alert(
-        'Test Alert - SecureWP Shield',
-        "This is a test email from SecureWP Shield.\n\nIf you received this, email alerts are working correctly.\n\nSite: " . get_site_url()
+        'Test Alert - WP Secure Pro',
+        "This is a test email from WP Secure Pro.\n\nIf you received this, email alerts are working correctly.\n\nSite: " . get_site_url()
     );
     echo '<div class="notice notice-success"><p>Test email sent to ' . esc_html(get_option('admin_email')) . '</p></div>';
 }

@@ -52,7 +52,7 @@ class SWPS_Notifications {
         $site  = get_site_url();
 
         $payload = array(
-            'username'    => 'SecureWP Shield',
+            'username'    => 'WP Secure Pro',
             'icon_emoji'  => ':shield:',
             'attachments' => array( array(
                 'color'      => $color,
@@ -79,7 +79,7 @@ class SWPS_Notifications {
 
     public static function send_telegram( $title, $message, $bot_token, $chat_id ) {
         $site = get_site_url();
-        $text = "🛡 *SecureWP Shield*\n\n*$title*\n\n$message\n\nSite: $site";
+        $text = "🛡 *WP Secure Pro*\n\n*$title*\n\n$message\n\nSite: $site";
 
         wp_remote_post( "https://api.telegram.org/bot{$bot_token}/sendMessage", array(
             'body'     => array(
@@ -99,7 +99,7 @@ class SWPS_Notifications {
         $color  = $colors[$severity] ?? 8421504;
 
         $payload = array(
-            'username' => 'SecureWP Shield',
+            'username' => 'WP Secure Pro',
             'embeds'   => array( array(
                 'title'       => $title,
                 'description' => $message,
@@ -120,8 +120,8 @@ class SWPS_Notifications {
     /* ── Test notifications ──────────────────────────────────────────────── */
 
     public static function test( $channel ) {
-        $title   = 'SecureWP Shield — Test Notification';
-        $message = 'This is a test notification from SecureWP Shield. If you received this, your ' . ucfirst($channel) . ' integration is working correctly.';
+        $title   = 'WP Secure Pro — Test Notification';
+        $message = 'This is a test notification from WP Secure Pro. If you received this, your ' . ucfirst($channel) . ' integration is working correctly.';
         $settings = get_option( 'swps_settings', array() );
 
         switch ($channel) {

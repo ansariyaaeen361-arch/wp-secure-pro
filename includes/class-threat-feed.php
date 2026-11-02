@@ -89,7 +89,7 @@ class SWPS_Threat_Feed {
             'body' => array(
                 'ip'         => $ip,
                 'categories' => implode(',', $categories), // 18=BruteForce, 21=WebAppAttack
-                'comment'    => $comment ?: 'Detected by SecureWP Shield WordPress Security Plugin',
+                'comment'    => $comment ?: 'Detected by WP Secure Pro WordPress Security Plugin',
             ),
             'timeout' => 5,
         ) );

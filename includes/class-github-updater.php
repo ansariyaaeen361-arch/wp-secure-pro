@@ -5,7 +5,7 @@ class SWPS_GitHub_Updater {
 
     /* ── CONFIG ── */
     const GITHUB_USER = 'ansariyaaeen361-arch';
-    const GITHUB_REPO = 'securewp-shield';
+    const GITHUB_REPO = 'wp-secure-pro';
     // Read-only token (only this repo's Contents:Read). Leave empty here and
     // set it once via the admin setting or SWPS_GITHUB_TOKEN in wp-config.php
     // instead of baking a secret into a file shipped to every site.
@@ -16,7 +16,7 @@ class SWPS_GitHub_Updater {
     private static $cache_key = 'swps_github_latest_release';
 
     public static function init() {
-        self::$plugin_file = plugin_basename( SWPS_PLUGIN_DIR . 'securewp-shield.php' );
+        self::$plugin_file = plugin_basename( SWPS_PLUGIN_DIR . 'wp-secure-pro.php' );
         self::$plugin_slug = dirname( self::$plugin_file );
 
         add_filter( 'pre_set_site_transient_update_plugins', array( __CLASS__, 'check_for_update' ) );
@@ -67,7 +67,7 @@ class SWPS_GitHub_Updater {
     private static function api_args() {
         $headers = array(
             'Accept'     => 'application/vnd.github+json',
-            'User-Agent' => 'SecureWP-Shield-Updater',
+            'User-Agent' => 'WP-Secure-Pro-Updater',
         );
         $token = self::token();
         if ( $token ) $headers['Authorization'] = 'Bearer ' . $token;
@@ -130,7 +130,7 @@ class SWPS_GitHub_Updater {
         $r = self::get_latest_release();
         if ( ! $r ) return $result;
         return (object) array(
-            'name' => 'SecureWP Shield', 'slug' => self::$plugin_slug, 'author' => SWPS_AUTHOR,
+            'name' => 'WP Secure Pro', 'slug' => self::$plugin_slug, 'author' => SWPS_AUTHOR,
             'version' => self::latest_version( $r ), 'homepage' => $r['html_url'] ?? '',
             'download_link' => self::asset_url( $r ), 'last_updated' => $r['published_at'] ?? '',
             'sections' => array( 'changelog' => wpautop( esc_html( $r['body'] ?? '' ) ) ),
@@ -140,7 +140,7 @@ class SWPS_GitHub_Updater {
     public static function download_package( $reply, $package, $upgrader ) {
         if ( strpos( (string) $package, 'api.github.com/repos/' . self::GITHUB_USER . '/' . self::GITHUB_REPO ) === false ) return $reply;
         $args = array( 'timeout' => 300, 'headers' => array(
-            'Accept' => 'application/octet-stream', 'User-Agent' => 'SecureWP-Shield-Updater' ) );
+            'Accept' => 'application/octet-stream', 'User-Agent' => 'WP-Secure-Pro-Updater' ) );
         $token = self::token();
         if ( $token ) $args['headers']['Authorization'] = 'Bearer ' . $token;
 

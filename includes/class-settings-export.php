@@ -95,7 +95,7 @@ class SWPS_Settings_Export {
             }
         }
 
-        SWPS_Audit_Trail::log('settings_imported', 'plugin', '', 'SecureWP Shield', "Imported $imported settings from file (v{$data['version']})");
+        SWPS_Audit_Trail::log('settings_imported', 'plugin', '', 'WP Secure Pro', "Imported $imported settings from file (v{$data['version']})");
         wp_send_json_success("Successfully imported $imported settings.");
     }
 
@@ -117,7 +117,7 @@ class SWPS_Settings_Export {
             delete_option($key);
         }
 
-        SWPS_Audit_Trail::log('settings_reset', 'plugin', '', 'SecureWP Shield', 'All plugin settings have been reset to defaults.');
+        SWPS_Audit_Trail::log('settings_reset', 'plugin', '', 'WP Secure Pro', 'All plugin settings have been reset to defaults.');
         wp_send_json_success('All settings have been reset.');
     }
 }

@@ -30,7 +30,7 @@ class SWPS_Pwned_Check {
         if ( $cached === false ) {
             $response = wp_remote_get( self::API_BASE . $prefix, array(
                 'timeout'     => 5,
-                'user-agent'  => 'SecureWP-Shield/' . SWPS_VERSION,
+                'user-agent'  => 'WP-Secure-Pro/' . SWPS_VERSION,
             ) );
             if ( is_wp_error($response) ) return null; // API unavailable — don't block
             $cached = wp_remote_retrieve_body($response);
@@ -132,7 +132,7 @@ class SWPS_Pwned_Check {
                     array(
                         'headers' => array(
                             'hibp-api-key'  => $api_key,
-                            'user-agent'    => 'SecureWP-Shield/' . SWPS_VERSION,
+                            'user-agent'    => 'WP-Secure-Pro/' . SWPS_VERSION,
                         ),
                         'timeout' => 5,
                     )

@@ -259,7 +259,7 @@
     <div class="swps-tab-content" id="tab-whitelabel">
         <div class="swps-card">
             <h2>White Label / Client Mode</h2>
-            <p class="description">Rebrand the plugin for clients. Hide the SecureWP Shield name and use your own agency branding.</p>
+            <p class="description">Rebrand the plugin for clients. Hide the WP Secure Pro name and use your own agency branding.</p>
             <form method="post" action="">
                 <?php wp_nonce_field('swps_save_whitelabel', 'swps_wl_nonce'); ?>
                 <table class="form-table swps-form-table">

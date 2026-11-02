@@ -105,7 +105,7 @@
     <div class="swps-tab-content" id="tab-agent">
         <div class="swps-card">
             <h2>Agent Mode — Push Status to Hub</h2>
-            <p class="description">Configure this site to push its security status to a central hub running SecureWP Shield.</p>
+            <p class="description">Configure this site to push its security status to a central hub running WP Secure Pro.</p>
             <form method="post" action="options.php">
                 <?php settings_fields('swps_settings_group'); ?>
                 <table class="form-table swps-form-table">

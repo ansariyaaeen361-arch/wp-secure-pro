@@ -91,7 +91,7 @@ class SWPS_Uptime_Monitor {
 
         $response = wp_remote_get($url, array(
             'timeout'    => 15,
-            'user-agent' => 'SecureWP-Shield/3.0 Uptime-Monitor',
+            'user-agent' => 'WP-Secure-Pro/' . SWPS_VERSION . ' Uptime-Monitor',
             'sslverify'  => false,
         ));
 

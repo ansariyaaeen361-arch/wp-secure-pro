@@ -47,7 +47,7 @@ class SWPS_Vuln_Scanner {
         if ( $total > 0 ) {
             SWPS_Activity_Log::add( 'vuln_scan', 'critical', "Vulnerability scan found $total vulnerabilities" );
             SWPS_Email_Alerts::send_alert(
-                'SecureWP Shield: Vulnerabilities Found',
+                'WP Secure Pro: Vulnerabilities Found',
                 "The vulnerability scanner found $total vulnerabilities on your site.\n\nPlease log in to your WordPress dashboard and review the Security Scanner page immediately."
             );
         } else {

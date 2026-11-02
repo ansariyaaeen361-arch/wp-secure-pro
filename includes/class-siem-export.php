@@ -20,7 +20,7 @@ class SWPS_SIEM_Export {
             'source'        => array(
                 'site_url'   => get_site_url(),
                 'site_name'  => get_bloginfo('name'),
-                'plugin'     => 'SecureWP Shield v4.0',
+                'plugin'     => 'WP Secure Pro v4.0',
             ),
             'event'         => array(
                 'action'     => $log_entry['action'] ?? '',
@@ -86,7 +86,7 @@ class SWPS_SIEM_Export {
         $headers = array('Content-Type' => 'application/json');
 
         if ($format === 'splunk_hec') {
-            $body    = json_encode(array('event' => json_decode($json, true), 'sourcetype' => 'securewp_shield'));
+            $body    = json_encode(array('event' => json_decode($json, true), 'sourcetype' => 'wp_secure_pro'));
             $headers['Authorization'] = 'Splunk ' . $token;
         } elseif ($format === 'gelf') {
             $data             = json_decode($json, true);
@@ -120,7 +120,7 @@ class SWPS_SIEM_Export {
         $priority  = 134; // facility=16 (local0), severity=6 (info)
         $timestamp = date('Y-m-d\TH:i:s\Z');
         $hostname  = parse_url(get_site_url(), PHP_URL_HOST) ?: 'wordpress';
-        $app_name  = 'securewp-shield';
+        $app_name  = 'wp-secure-pro';
         $msg_id    = $event['event']['action'] ?? '-';
         $message   = $event['message'] ?? '-';
 
@@ -176,14 +176,14 @@ class SWPS_SIEM_Export {
         $settings = get_option('swps_settings', array());
         if (empty($settings['siem_enabled'])) return;
         // Send a daily heartbeat
-        self::dispatch(array('@timestamp'=>date('c'), 'event'=>array('action'=>'heartbeat'), 'source'=>array('site_url'=>get_site_url()), 'message'=>'Daily SIEM heartbeat from SecureWP Shield'));
+        self::dispatch(array('@timestamp'=>date('c'), 'event'=>array('action'=>'heartbeat'), 'source'=>array('site_url'=>get_site_url()), 'message'=>'Daily SIEM heartbeat from WP Secure Pro'));
     }
 
     public static function ajax_test() {
         check_ajax_referer('swps_nonce', 'nonce');
         if (!current_user_can('manage_options')) wp_send_json_error('Unauthorized');
         $event = self::build_event(array(
-            'time' => time(), 'action' => 'siem_test', 'details' => 'Test event from SecureWP Shield admin', 'ip' => SWPS_IP_Blocker::get_ip(), 'user_login' => wp_get_current_user()->user_login
+            'time' => time(), 'action' => 'siem_test', 'details' => 'Test event from WP Secure Pro admin', 'ip' => SWPS_IP_Blocker::get_ip(), 'user_login' => wp_get_current_user()->user_login
         ));
         self::dispatch($event);
         wp_send_json_success('Test event dispatched to all configured SIEM endpoints.');

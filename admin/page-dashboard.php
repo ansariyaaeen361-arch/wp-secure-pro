@@ -62,9 +62,9 @@ $threat_count   = $last_scan ? count($last_scan['threats'] ?? array()) : 0;
 ?>
 <div class="wrap swps-wrap">
     <div class="swps-header">
-        <span class="dashicons dashicons-shield swps-logo-icon"></span>
+        <?php echo swps_brand_logo_svg( 40 ); ?>
         <div>
-            <h1>SecureWP Shield <span class="swps-version">v<?php echo SWPS_VERSION; ?></span></h1>
+            <h1>WP Secure Pro <span class="swps-version">v<?php echo SWPS_VERSION; ?></span></h1>
             <p>Security overview for <strong><?php echo esc_html(get_bloginfo('name')); ?></strong></p>
         </div>
         <div style="margin-left:auto;display:flex;gap:8px">

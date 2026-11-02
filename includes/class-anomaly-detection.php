@@ -106,7 +106,7 @@ class SWPS_Anomaly_Detection {
             if ($severity === 'critical' || !empty($settings['anomaly_alert_all'])) {
                 SWPS_Notifications::send(
                     'login_anomaly',
-                    'SecureWP Shield: Login Anomaly Detected',
+                    'WP Secure Pro: Login Anomaly Detected',
                     $msg,
                     $severity
                 );

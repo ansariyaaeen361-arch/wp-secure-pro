@@ -46,7 +46,7 @@ class SWPS_Cloudflare {
         $response = self::api_request( "POST", "/zones/{$zone_id}/firewall/access_rules/rules", array(
             'mode'          => 'block',
             'configuration' => array( 'target' => 'ip', 'value' => $ip ),
-            'notes'         => 'SecureWP Shield: ' . ($notes ?: 'Auto-blocked'),
+            'notes'         => 'WP Secure Pro: ' . ($notes ?: 'Auto-blocked'),
         ) );
 
         if ( $response && ! empty($response['success']) ) {
@@ -101,7 +101,7 @@ class SWPS_Cloudflare {
 
         $synced = 0;
         foreach ($blocked as $ip) {
-            if ( self::block_ip_in_cf($ip, 'Synced from SecureWP Shield') ) $synced++;
+            if ( self::block_ip_in_cf($ip, 'Synced from WP Secure Pro') ) $synced++;
         }
 
         wp_send_json_success("Synced $synced IPs to Cloudflare.");

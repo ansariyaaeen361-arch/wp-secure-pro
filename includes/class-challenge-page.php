@@ -130,7 +130,7 @@ class SWPS_Challenge_Page {
     <div class="box">
         <div class="shield">🛡️</div>
         <h1>Checking your browser…</h1>
-        <p>This site is protected by SecureWP Shield. We're verifying your browser before proceeding. This usually takes just a moment.</p>
+        <p>This site is protected by WP Secure Pro. We're verifying your browser before proceeding. This usually takes just a moment.</p>
         <div class="spinner" id="spinner"></div>
         <div class="status" id="status">Verifying…</div>
         <div class="error-msg" id="error" style="display:none"></div>
