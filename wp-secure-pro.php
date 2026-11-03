@@ -3,7 +3,7 @@
  * Plugin Name: WP Secure Pro
  * Plugin URI:  https://yoursite.com
  * Description: Enterprise WordPress Security Suite — WAF, 2FA, Full Site Scan, Core Repair, Honeypot, Rate Limiter, Challenge Page, DNA Scanner, Canary Tokens, IP Reputation, SIEM, Multi-Site Monitor, Threat Feed Server
- * Version:     2.0.6
+ * Version:     2.0.7
  * Author:      Yaseen
  * Author URI:  https://yoursite.com
  * Text Domain: wp-secure-pro
@@ -12,13 +12,88 @@
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-define( 'SWPS_VERSION',     '2.0.6' );
+define( 'SWPS_VERSION',     '2.0.7' );
 define( 'SWPS_AUTHOR',      'Yaseen' );
 define( 'SWPS_PLUGIN_DIR',  plugin_dir_path( __FILE__ ) );
 define( 'SWPS_PLUGIN_URL',  plugin_dir_url( __FILE__ ) );
 define( 'SWPS_TABLE_LOG',   'swps_activity_log' );
 define( 'SWPS_TABLE_IPS',   'swps_blocked_ips' );
 define( 'SWPS_TABLE_LOGINS','swps_login_attempts' );
+
+/**
+ * Self-hosted updater (GitHub Releases).
+ *
+ * Fix (reported live): this plugin's folder/slug "wp-secure-pro" collides
+ * with an unrelated public plugin of the same name on wordpress.org, so
+ * WordPress's default update check was matching against THAT plugin and
+ * offering to silently overwrite this one on any site with auto-updates
+ * on. The "Update URI" header above tells WordPress core not to use its
+ * own wordpress.org match for this plugin; this filter (keyed to that
+ * header's hostname, per the WP 5.8+ Update URI mechanism) supplies the
+ * real update source instead, so legitimate new versions published here
+ * on GitHub still reach every site automatically.
+ *
+ * Read-only, repo-scoped fine-grained GitHub token — can only read this
+ * one repository's contents, nothing else on the account.
+ */
+define( 'SWPS_GH_REPO',  'ansariyaaeen361-arch/wp-secure-pro' );
+define( 'SWPS_GH_TOKEN', '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' );
+
+add_filter( 'update_plugins_github.com', 'swps_check_github_update', 10, 3 );
+function swps_check_github_update( $update, $plugin_data, $plugin_file ) {
+    if ( $plugin_file !== plugin_basename( __FILE__ ) ) return $update;
+
+    $cache_key = 'swps_gh_update_check';
+    $release   = get_transient( $cache_key );
+
+    if ( $release === false ) {
+        $response = wp_remote_get(
+            'https://api.github.com/repos/' . SWPS_GH_REPO . '/releases/latest',
+            array(
+                'headers' => array(
+                    'Authorization' => 'Bearer ' . SWPS_GH_TOKEN,
+                    'Accept'        => 'application/vnd.github+json',
+                    'User-Agent'    => 'WP-Secure-Pro-Updater',
+                ),
+                'timeout' => 10,
+            )
+        );
+        if ( is_wp_error( $response ) || wp_remote_retrieve_response_code( $response ) !== 200 ) {
+            set_transient( $cache_key, array( 'none' => 1 ), 3 * HOUR_IN_SECONDS );
+            return $update;
+        }
+        $release = json_decode( wp_remote_retrieve_body( $response ), true );
+        set_transient( $cache_key, $release, 3 * HOUR_IN_SECONDS );
+    }
+
+    if ( empty( $release ) || ! empty( $release['none'] ) || empty( $release['tag_name'] ) ) return $update;
+
+    $remote_version = ltrim( $release['tag_name'], 'v' );
+    if ( version_compare( $remote_version, SWPS_VERSION, '<=' ) ) return $update;
+
+    $asset_url = '';
+    foreach ( (array) ( $release['assets'] ?? array() ) as $asset ) {
+        if ( substr( $asset['name'], -4 ) === '.zip' ) { $asset_url = $asset['url']; break; }
+    }
+    if ( ! $asset_url ) return $update;
+
+    return array(
+        'slug'        => 'wp-secure-pro',
+        'plugin'      => $plugin_file,
+        'new_version' => $remote_version,
+        'url'         => 'https://github.com/' . SWPS_GH_REPO,
+        'package'     => $asset_url,
+    );
+}
+
+add_filter( 'http_request_args', 'swps_gh_inject_auth_header', 10, 2 );
+function swps_gh_inject_auth_header( $args, $url ) {
+    if ( strpos( $url, 'api.github.com/repos/' . SWPS_GH_REPO ) !== false ) {
+        $args['headers']['Authorization'] = 'Bearer ' . SWPS_GH_TOKEN;
+        $args['headers']['Accept']        = 'application/octet-stream';
+    }
+    return $args;
+}
 
 /**
  * Brand logo — a shield-and-checkmark mark matching the plugin's
