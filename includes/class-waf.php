@@ -122,8 +122,9 @@ class SWPS_WAF {
     }
 
     public static function run() {
-        // Skip for logged-in admins (whitelist)
-        if ( is_user_logged_in() && current_user_can('manage_options') ) return;
+        // Do not exempt administrators. Stolen administrator cookies are a
+        // common post-compromise path; explicit IP allow-listing below is the
+        // only bypass for trusted automation.
 
         $ip = SWPS_Login_Protection::get_client_ip();
 

@@ -44,6 +44,25 @@ class SWPS_Vuln_Scanner {
 
         update_option( 'swps_last_vuln_scan', $results );
 
+        // Fail closed only when the site owner explicitly enables it. A CVSS
+        // 9+ vulnerability in an active plugin is severe enough to justify
+        // availability trade-off; all other findings remain alert-only.
+        if ( ! empty( $settings['vuln_auto_disable_critical'] ) && function_exists( 'deactivate_plugins' ) ) {
+            if ( ! function_exists( 'get_plugins' ) ) require_once ABSPATH . 'wp-admin/includes/plugin.php';
+            foreach ( $results['plugins'] as $plugin ) {
+                $critical = false;
+                foreach ( (array) $plugin['vulnerabilities'] as $v ) if ( (float) ( $v['cvss_score'] ?? 0 ) >= 9.0 ) { $critical = true; break; }
+                if ( ! $critical ) continue;
+                foreach ( get_plugins() as $file => $data ) {
+                    if ( dirname( $file ) === $plugin['slug'] && is_plugin_active( $file ) ) {
+                        deactivate_plugins( $file, true );
+                        SWPS_Activity_Log::add( 'plugin_auto_disabled', 'critical', 'Disabled CVSS 9+ vulnerable plugin: ' . $file );
+                        SWPS_Email_Alerts::send_alert( 'WP Secure Pro: Plugin Auto-Disabled', "A CVSS 9+ vulnerability was found; this plugin was disabled: $file" );
+                    }
+                }
+            }
+        }
+
         if ( $total > 0 ) {
             SWPS_Activity_Log::add( 'vuln_scan', 'critical', "Vulnerability scan found $total vulnerabilities" );
             SWPS_Email_Alerts::send_alert(

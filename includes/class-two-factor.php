@@ -155,7 +155,7 @@ class SWPS_Two_Factor {
         $blog = get_bloginfo('name');
         // Send the code ONLY to the user who is logging in. (Do not route it
         // through the admin alert mailbox — that would leak the login OTP.)
-        $sent = wp_mail(
+        $email_sent = wp_mail(
             $user->user_email,
             "[{$blog}] Your Login Code: $code",
             "Your one-time login code is: $code\n\n" .
@@ -163,7 +163,18 @@ class SWPS_Two_Factor {
             "If you did not attempt to log in, change your password immediately.\n\n" .
             "Site: " . get_site_url()
         );
-        return $sent;
+
+        // A private Slack channel is an independent delivery path when a
+        // site's SMTP is unavailable. It receives the same short-lived code
+        // only when the owner has explicitly configured a Slack webhook.
+        $slack_sent = false;
+        if ( class_exists( 'SWPS_Slack_Alerts' ) && SWPS_Slack_Alerts::configured() ) {
+            $slack_sent = SWPS_Slack_Alerts::send(
+                'Login verification code',
+                'A login code was requested for WordPress account "' . $user->user_login . '". Code: ' . $code . "\n\nThis code expires in 5 minutes. If this was not you, change the account password immediately."
+            );
+        }
+        return (bool) ( $email_sent || $slack_sent );
     }
 
     /** "yaseen.mevteck@gmail.com" -> "yas.......@gmail.com" — enough to
@@ -196,7 +207,7 @@ class SWPS_Two_Factor {
         $user_login = sanitize_text_field( $_POST['user_login'] ?? '' );
         $user       = get_user_by( 'login', $user_login ) ?: get_user_by( 'email', $user_login );
 
-        if ( $user && get_user_meta( $user->ID, self::META_ENABLED, true ) ) {
+        if ( $user && self::is_enabled_for_user( $user->ID ) ) {
             if ( ! self::send_email_otp_rate_limited( $user ) ) {
                 wp_send_json_error( 'Please wait before requesting another code.' );
                 return;
@@ -212,7 +223,7 @@ class SWPS_Two_Factor {
      * -------------------------------------------------------------- */
 
     public static function check_2fa_on_login( $user_login, $user ) {
-        if ( ! get_user_meta( $user->ID, self::META_ENABLED, true ) ) return;
+        if ( ! self::is_enabled_for_user( $user->ID ) ) return;
 
         // OTP submitted with login form?
         $otp    = sanitize_text_field( $_POST['swps_otp'] ?? '' );
@@ -378,7 +389,7 @@ class SWPS_Two_Factor {
      * -------------------------------------------------------------- */
 
     public static function profile_section( $user ) {
-        $enabled = get_user_meta( $user->ID, self::META_ENABLED, true );
+        $enabled = self::is_enabled_for_user( $user->ID );
         $method  = get_user_meta( $user->ID, self::META_METHOD,  true ) ?: 'email';
         $secret  = get_user_meta( $user->ID, self::META_SECRET,  true );
         if ( ! $secret ) $secret = self::generate_secret();
@@ -397,7 +408,7 @@ class SWPS_Two_Factor {
             <tr>
                 <th>Method</th>
                 <td>
-                    <label><input type="radio" name="swps_2fa_method" value="email" <?php checked($method,'email'); ?>> 📧 Email OTP (code sent to your email)</label><br><br>
+                    <label><input type="radio" name="swps_2fa_method" value="email" <?php checked($method,'email'); ?>> 📧 Email OTP (sent to your email, plus private Slack if a webhook is configured)</label><br><br>
                     <label><input type="radio" name="swps_2fa_method" value="totp"  <?php checked($method,'totp');  ?>> 📱 Google Authenticator / Authy (TOTP)</label>
                 </td>
             </tr>
@@ -470,16 +481,20 @@ class SWPS_Two_Factor {
         $enabled = isset( $_POST['swps_2fa_enabled'] ) ? 1 : 0;
         $method  = in_array( $_POST['swps_2fa_method'] ?? '', array('email','totp') ) ? $_POST['swps_2fa_method'] : 'email';
 
-        update_user_meta( $user_id, self::META_ENABLED, $enabled );
-        update_user_meta( $user_id, self::META_METHOD,  $method );
-
         if ( $method === 'totp' ) {
             $secret = sanitize_text_field( $_POST['swps_totp_secret'] ?? '' );
             $verify = sanitize_text_field( $_POST['swps_totp_verify'] ?? '' );
             if ( $secret && $verify && self::verify_totp( $secret, $verify ) ) {
                 update_user_meta( $user_id, self::META_SECRET, $secret );
+            } elseif ( ! get_user_meta( $user_id, self::META_SECRET, true ) ) {
+                $method = 'email';
             }
         }
+
+        // An explicit per-user choice wins over the site's default role
+        // policy. This lets an administrator deliberately opt out.
+        update_user_meta( $user_id, self::META_ENABLED, $enabled );
+        update_user_meta( $user_id, self::META_METHOD, $method );
 
         if ( $enabled ) {
             SWPS_Activity_Log::add( '2fa_setup', 'info', "2FA enabled for user ID $user_id via $method" );
@@ -487,6 +502,26 @@ class SWPS_Two_Factor {
     }
 
     public static function is_enabled_for_user( $user_id ) {
-        return (bool) get_user_meta( $user_id, self::META_ENABLED, true );
+        // A per-user opt-in always enables 2FA.  In addition, the setting on
+        // the 2FA screen can require it for a role.  The old code displayed
+        // and saved that role setting but never consulted it during login,
+        // leaving a dangerous false sense of protection.
+        // A saved profile choice is intentional, including a saved OFF value.
+        // Otherwise the role policy supplies the secure default for new and
+        // existing Administrator accounts.
+        if ( metadata_exists( 'user', $user_id, self::META_ENABLED ) ) {
+            return (bool) get_user_meta( $user_id, self::META_ENABLED, true );
+        }
+
+        $user = get_userdata( $user_id );
+        return $user && self::is_required_by_role( $user );
+    }
+
+    /** Returns whether a role-based site policy mandates 2FA for this user. */
+    public static function is_required_by_role( $user ) {
+        if ( ! $user || empty( $user->ID ) ) return false;
+        $settings = get_option( 'swps_settings', array() );
+        $required = array_filter( array_map( 'sanitize_key', (array) ( $settings['2fa_require_for'] ?? array() ) ) );
+        return (bool) array_intersect( $required, (array) $user->roles );
     }
 }

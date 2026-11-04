@@ -33,9 +33,24 @@ class SWPS_Multisite_Monitor {
 
     public static function rest_auth($request) {
         $token    = $request->get_header('X-SWPS-Token');
+        $timestamp = (int) $request->get_header('X-SWPS-Timestamp');
+        $signature = $request->get_header('X-SWPS-Signature');
         $settings = get_option('swps_settings', array());
         $secret   = $settings['ms_hub_secret'] ?? '';
-        return !empty($secret) && hash_equals($secret, (string)$token);
+        if ( empty($secret) || !hash_equals($secret, (string)$token) || !$timestamp || abs(time() - $timestamp) > 300 ) return false;
+        $payload = $timestamp . "\n" . $request->get_method() . "\n" . $request->get_route() . "\n" . $request->get_body();
+        $expected = hash_hmac('sha256', $payload, $secret);
+        return is_string($signature) && hash_equals($expected, $signature);
+    }
+
+    private static function signed_headers($token, $method, $route, $body = '') {
+        $timestamp = time();
+        $payload = $timestamp . "\n" . strtoupper($method) . "\n" . $route . "\n" . $body;
+        return array(
+            'X-SWPS-Token'     => $token,
+            'X-SWPS-Timestamp' => (string) $timestamp,
+            'X-SWPS-Signature' => hash_hmac('sha256', $payload, $token),
+        );
     }
 
     /** See SWPS_Threat_Feed_Server::no_cache_headers() — same page-cache
@@ -96,9 +111,12 @@ class SWPS_Multisite_Monitor {
 
         foreach ($sites as $site) {
             $url    = rtrim($site['url'], '/') . '/wp-json/swps/v1/status';
-            $result = wp_remote_get($url, array(
-                'headers' => array('X-SWPS-Token' => $site['token']),
+            if ( strpos( $site['url'], 'https://' ) !== 0 || ! wp_http_validate_url( $url ) ) continue;
+            $result = wp_safe_remote_get($url, array(
+                'headers' => self::signed_headers( $site['token'], 'GET', '/swps/v1/status' ),
                 'timeout' => 10,
+                'redirection' => 0,
+                'sslverify' => true,
             ));
 
             $key = md5($site['url']);
@@ -142,10 +160,17 @@ class SWPS_Multisite_Monitor {
             'critical_events'=> self::count_critical_events(),
         );
 
-        $resp = wp_remote_post(rtrim($hub_url, '/') . '/wp-json/swps/v1/status', array(
-            'headers' => array('Content-Type' => 'application/json', 'X-SWPS-Token' => $token),
-            'body'    => json_encode($payload),
+        $endpoint = rtrim($hub_url, '/') . '/wp-json/swps/v1/status';
+        if ( strpos( $hub_url, 'https://' ) !== 0 || ! wp_http_validate_url( $endpoint ) ) return false;
+        $body = wp_json_encode($payload);
+        $headers = self::signed_headers( $token, 'POST', '/swps/v1/status', $body );
+        $headers['Content-Type'] = 'application/json';
+        $resp = wp_safe_remote_post($endpoint, array(
+            'headers' => $headers,
+            'body'    => $body,
             'timeout' => 10,
+            'redirection' => 0,
+            'sslverify' => true,
         ));
 
         return !is_wp_error($resp);
@@ -177,7 +202,7 @@ class SWPS_Multisite_Monitor {
         $url   = esc_url_raw(trim($_POST['url'] ?? ''));
         $token = sanitize_text_field($_POST['token'] ?? '');
         $name  = sanitize_text_field($_POST['name'] ?? '');
-        if (!$url) wp_send_json_error('Invalid URL.');
+        if (!$url || strpos($url, 'https://') !== 0 || !wp_http_validate_url($url)) wp_send_json_error('Invalid HTTPS public URL.');
         $sites = get_option(self::SITES_OPT, array());
         $sites[md5($url)] = array('url' => $url, 'token' => $token, 'name' => $name, 'added' => time());
         update_option(self::SITES_OPT, $sites);

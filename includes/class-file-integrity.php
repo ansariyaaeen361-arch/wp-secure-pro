@@ -10,16 +10,13 @@ class SWPS_File_Integrity {
     // someone could scan clean, wait a week while something gets planted,
     // then baseline without ever re-checking.
     const PRE_BASELINE_SCAN_MAX_AGE = HOUR_IN_SECONDS;
-    // Fallback location, used only if a webroot-external directory can't be created.
-    const QUARANTINE_DIR_FALLBACK = WP_CONTENT_DIR . '/swps-quarantine/';
 
     /**
      * Quarantined files are moved here. Preferred location is OUTSIDE the
      * webroot (a sibling of ABSPATH) so quarantined malware/secrets have no
-     * URL at all — this doesn't depend on the host actually honoring
-     * .htaccess access-control directives (confirmed unreliable on at least
-     * one OpenLiteSpeed setup). Falls back to a protected wp-content
-     * subfolder only if the webroot-external path isn't writable.
+     * URL at all — this does not depend on .htaccess, which OpenLiteSpeed and
+     * many managed stacks do not enforce. Quarantine fails closed if no
+     * webroot-external directory can be created.
      */
     public static function quarantine_dir() {
         static $dir = null;
@@ -28,10 +25,7 @@ class SWPS_File_Integrity {
         $outside = dirname( rtrim( ABSPATH, '/\\' ) ) . '/swps-quarantine/';
         if ( wp_mkdir_p( $outside ) && is_writable( $outside ) ) {
             $dir = $outside;
-        } else {
-            $dir = self::QUARANTINE_DIR_FALLBACK;
-            if ( ! is_dir( $dir ) ) wp_mkdir_p( $dir );
-        }
+        } else $dir = '';
         return $dir;
     }
 
@@ -517,7 +511,6 @@ class SWPS_File_Integrity {
         $files   = self::get_monitored_files();
         $changes = array();
         $baseline_dirty = false;
-        $auto_absorbed  = 0;
 
         // A core update (new WordPress version) can legitimately ADD brand
         // new files under wp-admin/ or wp-includes/ (e.g. a new bundled
@@ -532,18 +525,11 @@ class SWPS_File_Integrity {
         // exactly what a planted core-level backdoor would look like.
         $core_checksums = class_exists('SWPS_Core_Repair') ? SWPS_Core_Repair::get_checksums() : false;
 
-        // Fix (explicit, repeated user request): a non-core file that
-        // changed and did NOT match any malware signature is, overwhelmingly,
-        // just a normal plugin/theme update — not something worth an
-        // admin's attention every single time. Rather than surface it and
-        // make the admin click "I did this" on hundreds of individual rows,
-        // it's folded straight into the baseline right here, silently, and
-        // only a one-line count goes to the Activity Log. Nothing about the
-        // actual safety check changes: content_malware_hit() still runs on
-        // every added/modified file first, and ANYTHING it flags — or any
-        // change to a core file (wp-admin/, wp-includes/, wp-config.php,
-        // index.php, .htaccess — see get_severity()) — is excluded from this
-        // auto-absorb and always surfaced for a human to look at.
+        // Security invariant: only a file that is cryptographically verified
+        // against the current WordPress core checksum list may be folded into
+        // the baseline automatically. A custom backdoor is normally not in a
+        // signature list, so silently accepting plugin/theme changes makes
+        // file integrity monitoring ineffective after the first scan.
         foreach ( $files as $path ) {
             $rel = self::rel($path);
             if ( in_array($rel, $ignored) ) continue;
@@ -559,21 +545,19 @@ class SWPS_File_Integrity {
 
             if ( ! isset($baseline[$rel]) ) {
                 $malware = self::content_malware_hit( $path );
-                if ( ! $malware && ( ! $is_core || $is_official_core ) ) {
+                if ( $is_official_core ) {
                     $baseline[$rel] = array( 'hash' => $hash, 'size' => filesize($path), 'mtime' => filemtime($path) );
                     $baseline_dirty = true;
-                    $auto_absorbed++;
                     continue;
                 }
-                $entry = array( 'file' => $rel, 'type' => 'added', 'severity' => $malware ? 'critical' : 'info' );
+                $entry = array( 'file' => $rel, 'type' => 'added', 'severity' => $malware ? 'critical' : 'warning' );
                 if ( $malware ) $entry['malware_sig'] = $malware;
                 $changes[] = $entry;
             } elseif ( $hash !== $baseline[$rel]['hash'] ) {
                 $malware = self::content_malware_hit( $path );
-                if ( ! $malware && ( ! $is_core || $is_official_core ) ) {
+                if ( $is_official_core ) {
                     $baseline[$rel] = array( 'hash' => $hash, 'size' => filesize($path), 'mtime' => filemtime($path) );
                     $baseline_dirty = true;
-                    $auto_absorbed++;
                     continue;
                 }
                 $entry = array(
@@ -589,21 +573,13 @@ class SWPS_File_Integrity {
             }
         }
 
-        // Check for deleted files — a removed non-core file is likewise
-        // auto-absorbed (baseline entry dropped) rather than surfaced; a
-        // missing core file stays visible, since core files should never
-        // just disappear outside of an update that also replaces them.
+        // Every deletion is material. A removed security plugin, scanner, or
+        // webshell evidence must never be silently removed from the baseline.
         foreach ( $baseline as $rel => $data ) {
             if ( in_array($rel, $ignored) ) continue;
             $full = ABSPATH . $rel;
             if ( ! file_exists($full) ) {
-                if ( self::get_severity($rel) === 'critical' ) {
-                    $changes[] = array( 'file' => $rel, 'type' => 'deleted', 'severity' => 'info' );
-                } else {
-                    unset( $baseline[$rel] );
-                    $baseline_dirty = true;
-                    $auto_absorbed++;
-                }
+                $changes[] = array( 'file' => $rel, 'type' => 'deleted', 'severity' => self::get_severity($rel) === 'critical' ? 'critical' : 'warning' );
             }
         }
 
@@ -618,10 +594,6 @@ class SWPS_File_Integrity {
         );
 
         update_option( self::LAST_SCAN_OPTION, $result );
-
-        if ( $auto_absorbed > 0 ) {
-            SWPS_Activity_Log::add( 'fim_auto_absorb', 'info', "$auto_absorbed non-core file change(s) matched no malware signature and were silently folded into the baseline (routine plugin/theme updates)." );
-        }
 
         if ( ! empty($changes) ) {
             $critical_count = $result['critical'];
@@ -653,10 +625,14 @@ class SWPS_File_Integrity {
     /* ── Quarantine / Restore ────────────────────────────────────────────── */
 
     public static function quarantine_file( $rel_path ) {
-        $src  = ABSPATH . $rel_path;
-        if ( ! file_exists($src) ) return false;
+        $rel_path = ltrim( str_replace( '\\', '/', (string) $rel_path ), '/' );
+        if ( $rel_path === '' || strpos( $rel_path, '..' ) !== false ) return false;
+        $root = realpath( ABSPATH );
+        $src  = realpath( ABSPATH . $rel_path );
+        if ( ! $root || ! $src || ! self::is_path_within( $src, $root ) || ! is_file( $src ) || is_link( $src ) ) return false;
 
         $qdir = self::quarantine_dir();
+        if ( ! $qdir ) return false;
 
         // Belt-and-braces web protection in case quarantine_dir() had to fall
         // back to an in-webroot path — .htaccess rules aren't honored on
@@ -686,7 +662,10 @@ class SWPS_File_Integrity {
         $quarantine_path = sanitize_text_field( $_POST['quarantine_path'] ?? '' );
         $original_path   = sanitize_text_field( $_POST['original_path'] ?? '' );
 
-        if ( strpos($quarantine_path, self::quarantine_dir()) !== 0 ) {
+        $quarantine_dir = self::quarantine_dir();
+        $qroot = $quarantine_dir ? realpath( $quarantine_dir ) : false;
+        $qfile = realpath( $quarantine_path );
+        if ( ! $qroot || ! $qfile || ! self::is_path_within( $qfile, $qroot ) || ! is_file( $qfile ) || is_link( $qfile ) ) {
             wp_send_json_error('Invalid path');
         }
 
@@ -695,18 +674,25 @@ class SWPS_File_Integrity {
         if ( strpos( $original_path, '..' ) !== false ) {
             wp_send_json_error('Invalid path');
         }
-        $resolved        = realpath( ABSPATH ) . '/' . $original_path;
+        $root            = realpath( ABSPATH );
+        $resolved        = $root . '/' . $original_path;
         $real_target_dir = realpath( dirname( $resolved ) );
-        if ( $real_target_dir === false || strpos( $real_target_dir, realpath( ABSPATH ) ) !== 0 ) {
+        if ( ! $root || $real_target_dir === false || ! self::is_path_within( $real_target_dir, $root ) ) {
             wp_send_json_error('Invalid path');
         }
 
-        if ( rename( $quarantine_path, $resolved ) ) {
+        if ( rename( $qfile, $resolved ) ) {
             SWPS_Activity_Log::add( 'file_restored', 'warning', "File restored from quarantine: $original_path" );
             wp_send_json_success('File restored.');
         } else {
             wp_send_json_error('Restore failed.');
         }
+    }
+
+    private static function is_path_within( $path, $base ) {
+        $path = rtrim( wp_normalize_path( $path ), '/' );
+        $base = rtrim( wp_normalize_path( $base ), '/' );
+        return $path === $base || strpos( $path, $base . '/' ) === 0;
     }
 
     public static function ajax_ignore_file() {

@@ -176,7 +176,16 @@
                     <tr>
                         <th>Timezone</th>
                         <td>
-                            <?php echo wp_timezone_choice($settings['away_timezone'] ?? get_option('timezone_string'), 'swps_settings[away_timezone]'); ?>
+                            <?php
+                            // wp_timezone_choice() returns OPTION tags only.  It must be
+                            // enclosed in a SELECT; printing it directly makes every city
+                            // render as page text and creates a huge admin-page scroll.
+                            $away_timezone = $settings['away_timezone'] ?? get_option('timezone_string');
+                            ?>
+                            <select id="swps-away-timezone" name="swps_settings[away_timezone]" class="swps-select swps-timezone-select">
+                                <?php echo wp_timezone_choice( $away_timezone ); ?>
+                            </select>
+                            <p class="description">Choose the timezone used for the login lock schedule. You can type a city name while this dropdown is focused to jump to it.</p>
                         </td>
                     </tr>
                 </table>
@@ -345,28 +354,20 @@
         <div class="swps-card">
             <h2>Plugin Updates (Self-Hosted via GitHub)</h2>
             <p class="description">
-                This plugin checks a private GitHub repository for new releases and shows an
+                This plugin checks the public GitHub repository for signed releases and shows an
                 "Update available" notice on the normal Plugins page — same one-click update
                 as a WordPress.org plugin, just pointed at your own repo instead.
                 Repo: <code>github.com/<?php echo esc_html( SWPS_GitHub_Updater::GITHUB_USER ); ?>/<?php echo esc_html( SWPS_GitHub_Updater::GITHUB_REPO ); ?></code>
-                (private).
+                (public; no access token is required).
             </p>
             <form method="post" action="options.php">
                 <?php settings_fields('swps_settings_group'); ?>
                 <table class="form-table swps-form-table">
                     <tr>
-                        <th>GitHub Access Token</th>
+                        <th>Trusted Proxy IPs</th>
                         <td>
-                            <input type="password" name="swps_settings[github_token]" value="<?php echo esc_attr($settings['github_token'] ?? ''); ?>" class="regular-text" autocomplete="off" placeholder="github_pat_...">
-                            <p class="description">
-                                A fine-grained token scoped to <strong>only this one repo</strong>,
-                                with <strong>Contents: Read-only</strong> permission — nothing else.
-                                Needed because the repo is private; this plugin never needs write
-                                access to it. Generate one at
-                                <a href="https://github.com/settings/personal-access-tokens/new" target="_blank">github.com/settings/personal-access-tokens/new</a>.
-                                Leave blank to fall back to a token baked into the plugin file (if any)
-                                or <code>SWPS_GITHUB_TOKEN</code> defined in wp-config.php.
-                            </p>
+                            <input type="text" name="swps_settings[trusted_proxy_ips]" value="<?php echo esc_attr($settings['trusted_proxy_ips'] ?? ''); ?>" class="regular-text" autocomplete="off" placeholder="203.0.113.10, 203.0.113.11">
+                            <p class="description">Only add exact IPs of your reverse proxy or CDN. Forwarded visitor-IP headers are ignored unless the immediate connection comes from one of these IPs.</p>
                         </td>
                     </tr>
                     <tr>
@@ -449,6 +450,7 @@ jQuery(document).ready(function($) {
             $select.prop('disabled', true);
         }
     });
+
 });
 </script>
 

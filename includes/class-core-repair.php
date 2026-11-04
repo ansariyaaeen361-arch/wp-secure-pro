@@ -100,13 +100,18 @@ class SWPS_Core_Repair {
 
         $version  = get_bloginfo('version');
         $dl_url   = "https://core.svn.wordpress.org/tags/{$version}/{$rel_path}";
-        $response = wp_remote_get($dl_url, array('timeout' => 30));
+        $response = wp_safe_remote_get($dl_url, array('timeout' => 30, 'sslverify' => true, 'redirection' => 0));
 
         if (is_wp_error($response) || wp_remote_retrieve_response_code($response) !== 200) {
             return array('success' => false, 'message' => 'Could not download file from WordPress.org.');
         }
 
         $content   = wp_remote_retrieve_body($response);
+        // Verify the downloaded bytes before touching a live core file. The
+        // post-write check alone can leave a malicious/corrupt file in place.
+        if ( md5( $content ) !== $checksums[$rel_path] ) {
+            return array('success' => false, 'message' => 'Downloaded file checksum did not match WordPress.org metadata.');
+        }
         $full_path = rtrim(ABSPATH, '/\\') . '/' . $rel_path;
         $dir       = dirname($full_path);
 

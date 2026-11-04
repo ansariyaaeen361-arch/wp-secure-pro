@@ -46,7 +46,7 @@
                         ?>
                         <label style="display:block;margin-bottom:6px">
                             <input type="checkbox" name="swps_settings[2fa_require_for][]" value="<?php echo $role; ?>" <?php checked($chk); ?>>
-                            <?php echo esc_html($label); ?>
+                            <?php echo esc_html($label); ?><?php if ( $role === 'administrator' ): ?> <strong>(enabled by default)</strong><?php endif; ?>
                         </label>
                         <?php endforeach; ?>
                         <p class="description">Users in these roles MUST set up 2FA before accessing admin.</p>
@@ -82,7 +82,7 @@
             </thead>
             <tbody>
             <?php foreach ($admins as $user):
-                $fa_enabled = get_user_meta($user->ID, '_swps_2fa_enabled', true);
+                $fa_enabled = SWPS_Two_Factor::is_enabled_for_user($user->ID);
                 $fa_method  = get_user_meta($user->ID, '_swps_2fa_method', true) ?: 'email';
                 $edit_url   = get_edit_user_link($user->ID);
             ?>

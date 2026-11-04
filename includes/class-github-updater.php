@@ -6,10 +6,6 @@ class SWPS_GitHub_Updater {
     /* ── CONFIG ── */
     const GITHUB_USER = 'ansariyaaeen361-arch';
     const GITHUB_REPO = 'wp-secure-pro';
-    // Read-only token (only this repo's Contents:Read). Leave empty here and
-    // set it once via the admin setting or SWPS_GITHUB_TOKEN in wp-config.php
-    // instead of baking a secret into a file shipped to every site.
-    const BAKED_TOKEN = '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';
 
     private static $plugin_file;   // "slug/main-file.php"
     private static $plugin_slug;   // "slug"
@@ -56,22 +52,11 @@ class SWPS_GitHub_Updater {
         wp_send_json_success( "Already up to date (latest release: v{$new})." );
     }
 
-    private static function token() {
-        if ( defined( 'SWPS_GITHUB_TOKEN' ) && SWPS_GITHUB_TOKEN ) return SWPS_GITHUB_TOKEN; // wp-config override
-        $settings = get_option( 'swps_settings', array() );
-        $opt = trim( (string) ( $settings['github_token'] ?? '' ) );                          // admin setting
-        if ( $opt ) return $opt;
-        return self::BAKED_TOKEN;                                                              // baked default
-    }
-
     private static function api_args() {
-        $headers = array(
+        return array( 'timeout' => 20, 'headers' => array(
             'Accept'     => 'application/vnd.github+json',
             'User-Agent' => 'WP-Secure-Pro-Updater',
-        );
-        $token = self::token();
-        if ( $token ) $headers['Authorization'] = 'Bearer ' . $token;
-        return array( 'timeout' => 20, 'headers' => $headers );
+        ) );
     }
 
     private static function get_latest_release() {
@@ -101,6 +86,28 @@ class SWPS_GitHub_Updater {
         return null;
     }
 
+    private static function signature_url( $r, $package_url ) {
+        foreach ( (array) ( $r['assets'] ?? array() ) as $a ) {
+            if ( ! empty( $a['url'] ) && $a['url'] === $package_url ) {
+                $name = (string) ( $a['name'] ?? '' );
+                foreach ( (array) ( $r['assets'] ?? array() ) as $candidate ) {
+                    if ( (string) ( $candidate['name'] ?? '' ) === $name . '.sig' ) return $candidate['url'] ?? null;
+                }
+            }
+        }
+        return null;
+    }
+
+    private static function public_key() {
+        if ( ! defined( 'SWPS_UPDATE_PUBLIC_KEY' ) || ! SWPS_UPDATE_PUBLIC_KEY || ! function_exists( 'sodium_crypto_sign_verify_detached' ) ) return null;
+        $key = base64_decode( (string) SWPS_UPDATE_PUBLIC_KEY, true );
+        return $key !== false && strlen( $key ) === SODIUM_CRYPTO_SIGN_PUBLICKEYBYTES ? $key : null;
+    }
+
+    private static function update_is_verifiable( $r, $package_url ) {
+        return self::public_key() && self::signature_url( $r, $package_url );
+    }
+
     public static function check_for_update( $transient ) {
         if ( empty( $transient->checked ) ) return $transient;
         $r = self::get_latest_release();
@@ -109,7 +116,7 @@ class SWPS_GitHub_Updater {
         $new = self::latest_version( $r );
         if ( version_compare( $new, SWPS_VERSION, '>' ) ) {
             $pkg = self::asset_url( $r );
-            if ( ! $pkg ) return $transient;
+            if ( ! $pkg || ! self::update_is_verifiable( $r, $pkg ) ) return $transient;
             $transient->response[ self::$plugin_file ] = (object) array(
                 'slug' => self::$plugin_slug, 'plugin' => self::$plugin_file,
                 'new_version' => $new, 'url' => $r['html_url'] ?? '',
@@ -139,17 +146,28 @@ class SWPS_GitHub_Updater {
 
     public static function download_package( $reply, $package, $upgrader ) {
         if ( strpos( (string) $package, 'api.github.com/repos/' . self::GITHUB_USER . '/' . self::GITHUB_REPO ) === false ) return $reply;
+        $release = self::get_latest_release();
+        $sig_url = $release ? self::signature_url( $release, $package ) : null;
+        $public_key = self::public_key();
+        if ( ! $sig_url || ! $public_key ) return new WP_Error( 'swps_unsigned_update', 'Update rejected: a valid Ed25519 signing key and detached .sig release asset are required.' );
+
         $args = array( 'timeout' => 300, 'headers' => array(
             'Accept' => 'application/octet-stream', 'User-Agent' => 'WP-Secure-Pro-Updater' ) );
-        $token = self::token();
-        if ( $token ) $args['headers']['Authorization'] = 'Bearer ' . $token;
 
         $resp = wp_remote_get( $package, $args );
         if ( is_wp_error( $resp ) ) return $resp;
         if ( wp_remote_retrieve_response_code( $resp ) !== 200 ) return new WP_Error( 'dl', 'GitHub asset download failed (token/permission?).' );
+        $body = wp_remote_retrieve_body( $resp );
+        $sig_response = wp_remote_get( $sig_url, $args );
+        if ( is_wp_error( $sig_response ) || wp_remote_retrieve_response_code( $sig_response ) !== 200 ) return new WP_Error( 'sig', 'Update rejected: signature download failed.' );
+        $signature = wp_remote_retrieve_body( $sig_response );
+        $decoded = base64_decode( trim( $signature ), true );
+        if ( $decoded !== false ) $signature = $decoded;
+        if ( ! sodium_crypto_sign_verify_detached( $signature, $body, $public_key ) ) return new WP_Error( 'sig', 'Update rejected: Ed25519 signature verification failed.' );
+
         $tmp = wp_tempnam( 'plugin-update.zip' );
         if ( ! $tmp ) return new WP_Error( 'tmp', 'Temp file fail.' );
-        file_put_contents( $tmp, wp_remote_retrieve_body( $resp ) );
+        file_put_contents( $tmp, $body, LOCK_EX );
         return $tmp;
     }
 

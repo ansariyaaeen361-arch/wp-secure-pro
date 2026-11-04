@@ -21,11 +21,23 @@ class SWPS_Admin_Monitor {
         }
     }
 
+    /** Save the administrator baseline immediately on a clean activation. */
+    public static function establish_baseline() {
+        $known = get_option( 'swps_known_admins', array() );
+        if ( ! empty( $known ) ) return;
+        $admins = get_users( array( 'role' => 'administrator', 'fields' => 'ID' ) );
+        update_option( 'swps_known_admins', array_map( 'intval', (array) $admins ), false );
+    }
+
     public static function on_user_register( $user_id ) {
         $user = get_userdata( $user_id );
         if ( ! $user ) return;
 
         if ( in_array( 'administrator', (array) $user->roles ) ) {
+            if ( self::creation_locked( $user_id ) ) {
+                self::quarantine_admin( $user_id, 'New administrator creation was blocked.' );
+                return;
+            }
             $current = wp_get_current_user();
             $via     = $current->ID ? "by user #{$current->ID} ({$current->user_login})" : 'OUTSIDE WordPress (direct DB or API)';
 
@@ -58,6 +70,11 @@ class SWPS_Admin_Monitor {
     public static function on_role_change( $user_id, $new_role, $old_roles ) {
         if ( $new_role !== 'administrator' ) return;
         if ( in_array( 'administrator', (array) $old_roles ) ) return;
+
+        if ( self::creation_locked( $user_id ) ) {
+            self::quarantine_admin( $user_id, 'Administrator role assignment was blocked.' );
+            return;
+        }
 
         $user    = get_userdata( $user_id );
         $current = wp_get_current_user();
@@ -105,6 +122,12 @@ class SWPS_Admin_Monitor {
             $user = get_userdata( $uid );
             if ( ! $user ) continue;
 
+            $settings = get_option( 'swps_settings', array() );
+            if ( ! empty( $settings['admin_creation_lock'] ) ) {
+                self::quarantine_admin( $uid, 'Unknown administrator detected by the integrity check.' );
+                continue;
+            }
+
             SWPS_Activity_Log::add(
                 'rogue_admin_detected',
                 'critical',
@@ -127,8 +150,32 @@ class SWPS_Admin_Monitor {
             );
         }
 
-        // Update known admins list
-        update_option( 'swps_known_admins', $current_ids, false );
+        // Re-read after quarantine. The prior implementation saved the
+        // attacker's ID into the trusted baseline even after demoting it,
+        // allowing a later promotion to be accepted as known.
+        $remaining = get_users( array( 'role' => 'administrator', 'fields' => 'ID' ) );
+        update_option( 'swps_known_admins', array_map( 'intval', (array) $remaining ), false );
+    }
+
+    private static function creation_locked( $user_id ) {
+        $settings = get_option( 'swps_settings', array() );
+        if ( empty( $settings['admin_creation_lock'] ) ) return false;
+        $known = array_map( 'intval', (array) get_option( 'swps_known_admins', array() ) );
+        // user_register and set_user_role are creation/promotion events; they
+        // are never needed for an already-existing administrator. Fail closed
+        // even if the first scheduled integrity baseline has not run yet.
+        return ! in_array( (int) $user_id, $known, true );
+    }
+
+    private static function quarantine_admin( $user_id, $reason ) {
+        $user = get_userdata( $user_id );
+        if ( ! $user ) return;
+        // Preserve the account for evidence, but remove all privileged
+        // capabilities immediately. This is safer than irreversible deletion.
+        $user->set_role( 'subscriber' );
+        update_user_meta( $user_id, 'swps_quarantined_admin', time() );
+        SWPS_Activity_Log::add( 'admin_quarantined', 'critical', "$reason User: {$user->user_login} (#$user_id)" );
+        SWPS_Email_Alerts::send_alert( 'WP Secure Pro: Unauthorized Admin Blocked', "$reason\nUser: {$user->user_login}\nSite: " . get_site_url() );
     }
 
     public static function get_all_admins() {

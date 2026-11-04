@@ -13,14 +13,22 @@ class SWPS_Login_Protection {
     }
 
     public static function get_client_ip() {
-        $keys = array( 'HTTP_CF_CONNECTING_IP', 'HTTP_X_FORWARDED_FOR', 'HTTP_X_REAL_IP', 'REMOTE_ADDR' );
-        foreach ( $keys as $key ) {
-            if ( ! empty( $_SERVER[ $key ] ) ) {
-                $ip = trim( explode( ',', $_SERVER[ $key ] )[0] );
-                if ( filter_var( $ip, FILTER_VALIDATE_IP ) ) return $ip;
-            }
+        $remote = isset( $_SERVER['REMOTE_ADDR'] ) ? trim( (string) $_SERVER['REMOTE_ADDR'] ) : '';
+        if ( ! filter_var( $remote, FILTER_VALIDATE_IP ) ) return '0.0.0.0';
+
+        // Forwarded headers are supplied by the client unless the immediate
+        // peer is a proxy we explicitly trust. Never let an attacker choose a
+        // new IP per request and bypass WAF/login rate limits.
+        $settings = get_option( 'swps_settings', array() );
+        $trusted  = preg_split( '/[\s,]+/', (string) ( $settings['trusted_proxy_ips'] ?? '' ), -1, PREG_SPLIT_NO_EMPTY );
+        if ( ! in_array( $remote, $trusted, true ) ) return $remote;
+
+        foreach ( array( 'HTTP_CF_CONNECTING_IP', 'HTTP_X_FORWARDED_FOR', 'HTTP_X_REAL_IP' ) as $key ) {
+            if ( empty( $_SERVER[ $key ] ) ) continue;
+            $ip = trim( explode( ',', (string) $_SERVER[ $key ] )[0] );
+            if ( filter_var( $ip, FILTER_VALIDATE_IP ) ) return $ip;
         }
-        return '0.0.0.0';
+        return $remote;
     }
 
     public static function check_ip_blocked( $user, $username, $password ) {

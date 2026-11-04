@@ -229,6 +229,18 @@
 /* ── Form elements ── */
 .swps-form-table th  { width: 220px; }
 .swps-select         { max-width: 400px; }
+.swps-timezone-select {
+    display: block;
+    width: min(100%, 420px);
+    height: 36px !important;
+    min-height: 36px;
+    padding: 0 34px 0 10px;
+    line-height: 1.2;
+    background: #fff;
+    border: 1px solid var(--swps-border);
+    border-radius: 6px;
+    color: var(--swps-text);
+}
 .swps-select-sm      { padding: 4px 8px; font-size: 12px; border-radius: 4px; border: 1px solid var(--swps-border); background: #fff; color: var(--swps-text); }
 /* Fix (live screenshot — GeoIP Blocking's country list): the `size="8"`
    attribute on this multi-select was supposed to cap it to ~8 visible rows
@@ -413,3 +425,150 @@
 
 /* Header with action buttons on the right */
 .swps-header > div:first-of-type { line-height: 1.2; }
+
+/* ══════════════════════════════════════════════════════════════════════
+   UI SYSTEM v2 — final shared layout layer
+   This deliberately sits last. Older feature pages were created at different
+   times and mix raw cards, form tables and tabs. These rules give all of them
+   one predictable box model without requiring fragile page-by-page CSS.
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* One aligned content column for regular pages and grouped-tab pages. */
+#wpbody-content #swps-page-content > .swps-wrap,
+#wpbody-content #swps-gtab-content > .swps-wrap,
+#wpbody-content .swps-gtab-bar {
+    width: auto;
+    max-width: 1360px;
+    margin-left: 20px;
+    margin-right: 20px;
+}
+#wpbody-content #swps-page-content > .swps-wrap,
+#wpbody-content #swps-gtab-content > .swps-wrap { margin-top: 18px; }
+
+/* Cards never leak content into a neighbouring card. Scrolling belongs to the
+   table/body area, not to the entire page or a sticky card title. */
+.swps-wrap .swps-card {
+    overflow: hidden;
+    margin: 0 0 20px;
+    border: 1px solid #d9e2ef;
+    border-radius: 12px;
+    box-shadow: 0 2px 10px rgba(15, 35, 65, .06);
+    background: #fff;
+}
+.swps-wrap .swps-card-header {
+    position: static;
+    min-height: 48px;
+    padding: 14px 18px;
+    background: #f8fafc;
+    border-bottom: 1px solid #e2e8f0;
+    line-height: 1.35;
+}
+.swps-wrap .swps-card-body {
+    min-width: 0;
+    padding: 18px 20px;
+    overflow-x: auto;
+    scrollbar-gutter: stable;
+}
+.swps-wrap .swps-card > :not(.swps-card-header):not(.swps-card-body) { max-width: 100%; }
+
+/* The previous generic sticky/max-height combination produced title/table
+   overlap in long audit and monitoring cards. Keep data scrolling local. */
+.swps-wrap .swps-card:has(> table.swps-table),
+.swps-wrap .swps-card-body:has(> table.swps-table) {
+    max-height: none;
+    overflow: visible;
+}
+.swps-wrap .swps-card > table.swps-table,
+.swps-wrap .swps-card-body > table.swps-table {
+    display: table !important;
+    width: 100% !important;
+    max-width: none;
+    min-width: 680px;
+    margin: 0;
+}
+.swps-wrap .swps-card:has(> table.swps-table) { overflow-x: auto; }
+.swps-wrap .swps-card-body:has(> table.swps-table) { max-height: 64vh; overflow: auto; }
+.swps-wrap .swps-card-body > .swps-table thead th { position: sticky; top: 0; z-index: 1; }
+
+/* Buttons/actions wrap instead of running over card boundaries. */
+.swps-wrap .swps-card-actions,
+.swps-wrap .swps-header > div:last-child {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+.swps-wrap .swps-btn,
+.swps-wrap .swps-btn-sm {
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    white-space: normal;
+}
+
+/* Native WordPress form tables are normalised inside every security card. */
+.swps-wrap .form-table,
+.swps-wrap .form-table tbody,
+.swps-wrap .form-table tr { width: 100%; max-width: 100%; }
+.swps-wrap .form-table th {
+    width: 220px;
+    padding: 14px 18px 14px 0;
+    font-size: 13px;
+    color: #24364b;
+    vertical-align: top;
+}
+.swps-wrap .form-table td { padding: 12px 0; vertical-align: top; }
+.swps-wrap .form-table td > label { display: inline-flex; align-items: center; gap: 7px; max-width: 100%; }
+.swps-wrap .form-table .description { max-width: 760px; line-height: 1.55; }
+
+/* Tabs remain on one calm, scrollable row. Nested feature tabs keep their
+   own namespace and cannot collide with group tabs. */
+.swps-gtab-bar { margin-bottom: 0; }
+.swps-gtab-bar .swps-page-title { margin: 22px 0 14px; }
+.swps-gtabs,
+.swps-tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 0 2px;
+    scrollbar-width: thin;
+}
+.swps-gtab,
+.swps-tab { flex: 0 0 auto; }
+
+/* Grids retain neat columns but cannot squeeze a card below a usable width. */
+.swps-wrap .swps-grid-2col,
+.swps-wrap .swps-main-grid,
+.swps-wrap .swps-two-col {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 20px;
+}
+.swps-wrap .swps-stats-row { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.swps-wrap .swps-feature-grid { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+
+/* Stop horizontal overflow from long IPs, URLs, paths and scanner output. */
+.swps-wrap td,
+.swps-wrap th,
+.swps-wrap .description,
+.swps-wrap .swps-feature-name { overflow-wrap: anywhere; }
+.swps-wrap .swps-code-block { overflow: auto; }
+
+@media (max-width: 1100px) {
+    .swps-wrap .swps-dash-hero { grid-template-columns: 1fr; }
+    .swps-wrap .swps-stats-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 782px) {
+    #wpbody-content #swps-page-content > .swps-wrap,
+    #wpbody-content #swps-gtab-content > .swps-wrap,
+    #wpbody-content .swps-gtab-bar { margin-left: 10px; margin-right: 10px; }
+    .swps-wrap .swps-grid-2col,
+    .swps-wrap .swps-main-grid,
+    .swps-wrap .swps-two-col { grid-template-columns: 1fr; gap: 14px; }
+    .swps-wrap .swps-card { border-radius: 10px; margin-bottom: 14px; }
+    .swps-wrap .swps-card-header { padding: 12px 14px; }
+    .swps-wrap .swps-card-body { padding: 14px; }
+    .swps-wrap .form-table th,
+    .swps-wrap .form-table td { display: block; width: 100%; padding: 8px 0; }
+    .swps-wrap .form-table th { padding-bottom: 0; }
+    .swps-wrap .swps-header { align-items: flex-start; padding: 16px; }
+    .swps-wrap .swps-header > div:last-child { margin-left: 0 !important; justify-content: flex-start; }
+    .swps-wrap .swps-card > table.swps-table { min-width: 680px; }
+}

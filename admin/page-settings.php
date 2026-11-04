@@ -127,6 +127,42 @@ $settings = wp_parse_args($settings, $defaults);
                     <button type="button" id="swps-reset-admins" class="swps-btn-sm">Reset Known Admins List</button>
                 </div>
             </div>
+
+            <!-- New Plugin Installation Approval -->
+            <div class="swps-card">
+                <div class="swps-card-header"><span class="dashicons dashicons-admin-plugins"></span> New Plugin Installation</div>
+                <div class="swps-card-body">
+                    <p><strong>🔒 Locked by default.</strong> New plugins cannot be installed from WordPress until you approve one with the security-email code or by re-entering your current administrator password.</p>
+                    <p class="description">Existing plugin and WordPress updates remain allowed. An approved window lasts 10 minutes and is consumed after a successful new-plugin installation.</p>
+                    <button type="button" id="swps-request-plugin-code" class="swps-btn">Send approval code</button>
+                    <span id="swps-plugin-code-status" style="margin-left:8px"></span>
+                    <p style="margin:14px 0 6px"><label for="swps-plugin-approval-code"><strong>Security-email code</strong></label></p>
+                    <input id="swps-plugin-approval-code" type="text" inputmode="numeric" maxlength="6" autocomplete="one-time-code" class="small-text" placeholder="6-digit code">
+                    <button type="button" id="swps-approve-plugin-install" class="swps-btn-sm">Approve for 10 minutes</button>
+                    <p style="margin:18px 0 6px"><strong>SMTP/email unavailable?</strong></p>
+                    <p class="description">Re-enter your current WordPress administrator password. This protects against a stolen browser session and does not depend on email delivery.</p>
+                    <input id="swps-plugin-approval-password" type="password" autocomplete="current-password" class="regular-text" placeholder="Current administrator password">
+                    <button type="button" id="swps-approve-plugin-install-password" class="swps-btn-sm">Approve with password</button>
+                </div>
+            </div>
+
+            <!-- Slack Security Alerts -->
+            <div class="swps-card">
+                <div class="swps-card-header"><span class="dashicons dashicons-format-chat"></span> Slack Security Alerts</div>
+                <div class="swps-card-body">
+                    <?php $slack_ready = class_exists('SWPS_Slack_Alerts') && SWPS_Slack_Alerts::configured(); ?>
+                    <p><strong>Status:</strong> <span style="color:<?php echo $slack_ready ? '#16803c' : '#b32d2e'; ?>"><?php echo $slack_ready ? '✓ Webhook configured' : 'Not configured'; ?></span></p>
+                    <p class="description">Slack is an independent alert channel. It continues to receive security alerts even if SMTP/email fails. The webhook is encrypted before saving and is never shown again.</p>
+                    <p style="margin:14px 0 6px"><label for="swps-slack-webhook"><strong>Slack Incoming Webhook URL</strong></label></p>
+                    <input id="swps-slack-webhook" type="password" autocomplete="off" class="large-text" placeholder="https://hooks.slack.com/services/...">
+                    <p style="margin:14px 0 6px"><label for="swps-slack-password"><strong>Current administrator password</strong></label></p>
+                    <input id="swps-slack-password" type="password" autocomplete="current-password" class="regular-text" placeholder="Required to save/replace webhook">
+                    <button type="button" id="swps-save-slack-webhook" class="swps-btn-sm">Save Slack webhook</button>
+                    <button type="button" id="swps-test-slack-webhook" class="swps-btn-sm">Send Slack Test</button>
+                    <?php if ( $slack_ready ) : ?><button type="button" id="swps-remove-slack-webhook" class="swps-btn-sm swps-block-btn">Remove Slack webhook</button><?php endif; ?>
+                    <span id="swps-slack-status" style="margin-left:8px"></span>
+                </div>
+            </div>
         </div>
 
         <div style="margin-top:20px">
@@ -146,4 +182,47 @@ document.getElementById('swps-reset-admins') && document.getElementById('swps-re
         location.reload();
     });
 });
+(function(){
+    var status = document.getElementById('swps-plugin-code-status');
+    function show(message, bad) { status.textContent = message; status.style.color = bad ? '#b32d2e' : '#16803c'; }
+    document.getElementById('swps-request-plugin-code') && document.getElementById('swps-request-plugin-code').addEventListener('click', function(){
+        jQuery.post(swps_vars.url, {action:'swps_request_plugin_install_code', nonce:swps_vars.nonce}, function(res){ show((res && res.data) || 'Request failed.', !(res && res.success)); });
+    });
+    document.getElementById('swps-approve-plugin-install') && document.getElementById('swps-approve-plugin-install').addEventListener('click', function(){
+        var code = document.getElementById('swps-plugin-approval-code').value;
+        jQuery.post(swps_vars.url, {action:'swps_approve_plugin_install', nonce:swps_vars.nonce, code:code}, function(res){ show((res && res.data) || 'Approval failed.', !(res && res.success)); });
+    });
+    document.getElementById('swps-approve-plugin-install-password') && document.getElementById('swps-approve-plugin-install-password').addEventListener('click', function(){
+        var password = document.getElementById('swps-plugin-approval-password').value;
+        jQuery.post(swps_vars.url, {action:'swps_approve_plugin_install_password', nonce:swps_vars.nonce, password:password}, function(res){
+            document.getElementById('swps-plugin-approval-password').value = '';
+            show((res && res.data) || 'Approval failed.', !(res && res.success));
+        });
+    });
+})();
+(function(){
+    var status = document.getElementById('swps-slack-status');
+    function show(message, bad) { status.textContent = message; status.style.color = bad ? '#b32d2e' : '#16803c'; }
+    document.getElementById('swps-save-slack-webhook') && document.getElementById('swps-save-slack-webhook').addEventListener('click', function(){
+        var webhook = document.getElementById('swps-slack-webhook').value;
+        var password = document.getElementById('swps-slack-password').value;
+        jQuery.post(swps_vars.url, {action:'swps_save_slack_webhook', nonce:swps_vars.nonce, webhook:webhook, password:password}, function(res){
+            document.getElementById('swps-slack-webhook').value = '';
+            document.getElementById('swps-slack-password').value = '';
+            show((res && res.data) || 'Save failed.', !(res && res.success));
+        });
+    });
+    document.getElementById('swps-test-slack-webhook') && document.getElementById('swps-test-slack-webhook').addEventListener('click', function(){
+        jQuery.post(swps_vars.url, {action:'swps_test_slack_webhook', nonce:swps_vars.nonce}, function(res){ show((res && res.data) || 'Test failed.', !(res && res.success)); });
+    });
+    document.getElementById('swps-remove-slack-webhook') && document.getElementById('swps-remove-slack-webhook').addEventListener('click', function(){
+        if (!confirm('Remove the Slack webhook from this site? Security alerts will no longer be sent to Slack.')) return;
+        var password = document.getElementById('swps-slack-password').value;
+        jQuery.post(swps_vars.url, {action:'swps_remove_slack_webhook', nonce:swps_vars.nonce, password:password}, function(res){
+            document.getElementById('swps-slack-password').value = '';
+            show((res && res.data) || 'Removal failed.', !(res && res.success));
+            if (res && res.success) location.reload();
+        });
+    });
+})();
 </script>

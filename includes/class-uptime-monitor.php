@@ -88,11 +88,15 @@ class SWPS_Uptime_Monitor {
 
     public static function check_url($url) {
         $start = microtime(true);
+        if ( ! self::is_safe_monitor_url( $url ) ) {
+            return array( 'status' => 'down', 'code' => 0, 'error' => 'Unsafe monitor URL rejected.', 'response_ms' => 0 );
+        }
 
-        $response = wp_remote_get($url, array(
+        $response = wp_safe_remote_get($url, array(
             'timeout'    => 15,
             'user-agent' => 'WP-Secure-Pro/' . SWPS_VERSION . ' Uptime-Monitor',
-            'sslverify'  => false,
+            'sslverify'  => true,
+            'redirection' => 0,
         ));
 
         $ms = round((microtime(true) - $start) * 1000);
@@ -115,6 +119,25 @@ class SWPS_Uptime_Monitor {
             'error'       => $ok ? '' : "HTTP $code",
             'response_ms' => $ms,
         );
+    }
+
+    private static function is_safe_monitor_url( $url ) {
+        $parts = wp_parse_url( $url );
+        if ( ! is_array( $parts ) || ( $parts['scheme'] ?? '' ) !== 'https' || empty( $parts['host'] ) || isset( $parts['user'] ) || isset( $parts['pass'] ) ) return false;
+        $host = strtolower( rtrim( $parts['host'], '.' ) );
+        if ( $host === 'localhost' || substr( $host, -6 ) === '.local' || substr( $host, -9 ) === '.internal' ) return false;
+        if ( filter_var( $host, FILTER_VALIDATE_IP ) ) return self::is_public_ip( $host );
+        $records = function_exists( 'dns_get_record' ) ? dns_get_record( $host, DNS_A | DNS_AAAA ) : array();
+        if ( empty( $records ) ) return false;
+        foreach ( $records as $record ) {
+            $ip = $record['ip'] ?? ( $record['ipv6'] ?? '' );
+            if ( ! self::is_public_ip( $ip ) ) return false;
+        }
+        return true;
+    }
+
+    private static function is_public_ip( $ip ) {
+        return (bool) filter_var( $ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE );
     }
 
     public static function get_stats() {
@@ -151,7 +174,7 @@ class SWPS_Uptime_Monitor {
         check_ajax_referer('swps_nonce', 'nonce');
         if (!current_user_can('manage_options')) wp_send_json_error('Unauthorized');
         $url      = esc_url_raw(trim($_POST['url'] ?? ''));
-        if (!$url || !filter_var($url, FILTER_VALIDATE_URL)) {
+        if (!$url || !filter_var($url, FILTER_VALIDATE_URL) || !self::is_safe_monitor_url($url)) {
             wp_send_json_error('Invalid URL.');
         }
         $settings = get_option('swps_settings', array());

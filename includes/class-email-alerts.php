@@ -22,6 +22,9 @@ class SWPS_Email_Alerts {
 
     public static function send_alert( $subject, $body ) {
         $settings = get_option( 'swps_settings', array() );
+        // Slack is an independent notification path. It still sends even if
+        // the owner temporarily turns off email alerts or SMTP is unhealthy.
+        if ( class_exists( 'SWPS_Slack_Alerts' ) ) SWPS_Slack_Alerts::send( $subject, $body );
         if ( empty( $settings['email_alerts'] ) ) return;
 
         $to = sanitize_email( $settings['alert_email'] ?? get_option('admin_email') );

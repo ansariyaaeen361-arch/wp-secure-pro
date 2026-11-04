@@ -3,7 +3,7 @@
  * Plugin Name: WP Secure Pro
  * Plugin URI:  https://yoursite.com
  * Description: Enterprise WordPress Security Suite — WAF, 2FA, Full Site Scan, Core Repair, Honeypot, Rate Limiter, Challenge Page, DNA Scanner, Canary Tokens, IP Reputation, SIEM, Multi-Site Monitor, Threat Feed Server
- * Version:     2.0.7
+ * Version:     2.2.5
  * Author:      Yaseen
  * Author URI:  https://yoursite.com
  * Text Domain: wp-secure-pro
@@ -12,7 +12,7 @@
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-define( 'SWPS_VERSION',     '2.0.7' );
+define( 'SWPS_VERSION',     '2.2.5' );
 define( 'SWPS_AUTHOR',      'Yaseen' );
 define( 'SWPS_PLUGIN_DIR',  plugin_dir_path( __FILE__ ) );
 define( 'SWPS_PLUGIN_URL',  plugin_dir_url( __FILE__ ) );
@@ -21,79 +21,18 @@ define( 'SWPS_TABLE_IPS',   'swps_blocked_ips' );
 define( 'SWPS_TABLE_LOGINS','swps_login_attempts' );
 
 /**
- * Self-hosted updater (GitHub Releases).
+ * Update security policy.
  *
- * Fix (reported live): this plugin's folder/slug "wp-secure-pro" collides
- * with an unrelated public plugin of the same name on wordpress.org, so
- * WordPress's default update check was matching against THAT plugin and
- * offering to silently overwrite this one on any site with auto-updates
- * on. The "Update URI" header above tells WordPress core not to use its
- * own wordpress.org match for this plugin; this filter (keyed to that
- * header's hostname, per the WP 5.8+ Update URI mechanism) supplies the
- * real update source instead, so legitimate new versions published here
- * on GitHub still reach every site automatically.
- *
- * Read-only, repo-scoped fine-grained GitHub token — can only read this
- * one repository's contents, nothing else on the account.
+ * A repository/API token must never be shipped in a distributed plugin.
+ * The dedicated updater class below now fails closed unless the release ZIP
+ * has a detached Ed25519 signature and the site's wp-config.php contains the
+ * matching SWPS_UPDATE_PUBLIC_KEY. This prevents a compromised GitHub
+ * release or transport path from becoming a remote-code update channel.
  */
 define( 'SWPS_GH_REPO',  'ansariyaaeen361-arch/wp-secure-pro' );
-define( 'SWPS_GH_TOKEN', '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' );
-
-add_filter( 'update_plugins_github.com', 'swps_check_github_update', 10, 3 );
-function swps_check_github_update( $update, $plugin_data, $plugin_file ) {
-    if ( $plugin_file !== plugin_basename( __FILE__ ) ) return $update;
-
-    $cache_key = 'swps_gh_update_check';
-    $release   = get_transient( $cache_key );
-
-    if ( $release === false ) {
-        $response = wp_remote_get(
-            'https://api.github.com/repos/' . SWPS_GH_REPO . '/releases/latest',
-            array(
-                'headers' => array(
-                    'Authorization' => 'Bearer ' . SWPS_GH_TOKEN,
-                    'Accept'        => 'application/vnd.github+json',
-                    'User-Agent'    => 'WP-Secure-Pro-Updater',
-                ),
-                'timeout' => 10,
-            )
-        );
-        if ( is_wp_error( $response ) || wp_remote_retrieve_response_code( $response ) !== 200 ) {
-            set_transient( $cache_key, array( 'none' => 1 ), 3 * HOUR_IN_SECONDS );
-            return $update;
-        }
-        $release = json_decode( wp_remote_retrieve_body( $response ), true );
-        set_transient( $cache_key, $release, 3 * HOUR_IN_SECONDS );
-    }
-
-    if ( empty( $release ) || ! empty( $release['none'] ) || empty( $release['tag_name'] ) ) return $update;
-
-    $remote_version = ltrim( $release['tag_name'], 'v' );
-    if ( version_compare( $remote_version, SWPS_VERSION, '<=' ) ) return $update;
-
-    $asset_url = '';
-    foreach ( (array) ( $release['assets'] ?? array() ) as $asset ) {
-        if ( substr( $asset['name'], -4 ) === '.zip' ) { $asset_url = $asset['url']; break; }
-    }
-    if ( ! $asset_url ) return $update;
-
-    return array(
-        'slug'        => 'wp-secure-pro',
-        'plugin'      => $plugin_file,
-        'new_version' => $remote_version,
-        'url'         => 'https://github.com/' . SWPS_GH_REPO,
-        'package'     => $asset_url,
-    );
-}
-
-add_filter( 'http_request_args', 'swps_gh_inject_auth_header', 10, 2 );
-function swps_gh_inject_auth_header( $args, $url ) {
-    if ( strpos( $url, 'api.github.com/repos/' . SWPS_GH_REPO ) !== false ) {
-        $args['headers']['Authorization'] = 'Bearer ' . SWPS_GH_TOKEN;
-        $args['headers']['Accept']        = 'application/octet-stream';
-    }
-    return $args;
-}
+// Public-only Ed25519 verification key for signed update releases. This is
+// safe to distribute; the matching private key must remain in GitHub Secrets.
+define( 'SWPS_UPDATE_PUBLIC_KEY', 'CXO3+YjELoTc0MZ8Ptv4c+zQ9fng23cp8EAF3OCTWEo=' );
 
 /**
  * Brand logo — a shield-and-checkmark mark matching the plugin's
@@ -124,12 +63,14 @@ function swps_brand_logo_data_uri() {
 
 // ─── Core classes (order matters — later classes depend on earlier) ────────────
 require_once SWPS_PLUGIN_DIR . 'includes/class-db.php';
+require_once SWPS_PLUGIN_DIR . 'includes/class-slack-alerts.php';
 require_once SWPS_PLUGIN_DIR . 'includes/class-email-alerts.php';
 require_once SWPS_PLUGIN_DIR . 'includes/class-activity-log.php';
 require_once SWPS_PLUGIN_DIR . 'includes/class-login-protection.php';
 require_once SWPS_PLUGIN_DIR . 'includes/class-ip-blocker.php';
 require_once SWPS_PLUGIN_DIR . 'includes/class-admin-monitor.php';
 require_once SWPS_PLUGIN_DIR . 'includes/class-scanner.php';
+require_once SWPS_PLUGIN_DIR . 'includes/class-security-posture.php';
 require_once SWPS_PLUGIN_DIR . 'includes/class-github-updater.php';
 add_action( 'init', array( 'SWPS_GitHub_Updater', 'init' ) );
 
@@ -214,7 +155,10 @@ register_deactivation_hook( __FILE__, 'swps_deactivate' );
 
 function swps_activate() {
     SWPS_DB::install();
+    SWPS_DB::apply_activation_security_profile();
+    SWPS_Admin_Monitor::establish_baseline();
     SWPS_Audit_Trail::create_table();
+    SWPS_Security_Posture::install_early_waf();
     if ( ! wp_next_scheduled('swps_hourly_check') ) {
         wp_schedule_event( time(), 'hourly', 'swps_hourly_check' );
     }
@@ -230,9 +174,22 @@ function swps_deactivate() {
 
 // ─── Boot all classes ──────────────────────────────────────────────────────────
 add_action( 'plugins_loaded', 'swps_init' );
+
+// Remove any updater credential stored by older plugin versions. Public
+// GitHub releases do not need authentication, and credentials must not remain
+// in the WordPress options table after upgrading.
+add_action( 'plugins_loaded', 'swps_remove_legacy_github_token', 1 );
+function swps_remove_legacy_github_token() {
+    $settings = get_option( 'swps_settings', array() );
+    if ( is_array( $settings ) && array_key_exists( 'github_token', $settings ) ) {
+        unset( $settings['github_token'] );
+        update_option( 'swps_settings', $settings );
+    }
+}
 function swps_init() {
     // Apply safe default settings once per version (no reactivation needed).
     SWPS_DB::maybe_apply_defaults();
+    SWPS_Security_Posture::init();
 
     // Core
     SWPS_Email_Alerts::init();
@@ -557,6 +514,8 @@ function swps_sanitize_settings( $input ) {
     // honeypot, etc. that aren't in the lists below).
     $clean = get_option( 'swps_settings', array() );
     if ( ! is_array($clean) ) $clean = array();
+    // Remove legacy GitHub credentials previously saved by older updater UI.
+    unset( $clean['github_token'] );
     if ( ! is_array($input) ) return $clean;
 
     $text_fields = array(
@@ -567,7 +526,7 @@ function swps_sanitize_settings( $input ) {
         'geoip_mode','geoip_countries','maxmind_license_key',
         'wpscan_api_key','gsb_api_key',
         'away_start','away_end','away_timezone',
-        'login_allowed_ips','github_token',
+        'login_allowed_ips','trusted_proxy_ips',
     );
     foreach ( $text_fields as $f ) {
         if ( isset($input[$f]) ) $clean[$f] = sanitize_text_field($input[$f]);
@@ -577,7 +536,8 @@ function swps_sanitize_settings( $input ) {
         'email_alerts','file_monitor_enabled','two_factor_enabled','waf_enabled',
         'waf_sqli','waf_xss','waf_lfi','waf_rfi','waf_bad_bot',
         'captcha_enabled','geoip_enabled','geoip_login_only','live_traffic_enabled',
-        'vuln_auto_scan','away_mode_enabled','blacklist_monitor_enabled',
+        'vuln_auto_scan','vuln_auto_disable_critical','away_mode_enabled','blacklist_monitor_enabled',
+        'uptime_enabled','uptime_alert_down','uptime_alert_recover','admin_creation_lock',
         'security_headers_enabled',
     );
     foreach ( $toggle_fields as $f ) {
@@ -690,6 +650,43 @@ function swps_ajax_reset_known_admins() {
     if ( ! current_user_can('manage_options') ) wp_send_json_error('Unauthorized');
     delete_option( 'swps_known_admins' );
     wp_send_json_success( array('message' => 'Known admins list reset. Current admins will be re-learned on next check.') );
+}
+
+// Slack webhook URLs are credentials. Saving/replacing one requires the
+// current admin password, not merely a possibly stolen logged-in cookie.
+add_action( 'wp_ajax_swps_save_slack_webhook', 'swps_ajax_save_slack_webhook' );
+function swps_ajax_save_slack_webhook() {
+    check_ajax_referer( 'swps_nonce', 'nonce' );
+    if ( ! current_user_can( 'manage_options' ) ) wp_send_json_error( 'Unauthorized.' );
+    $user = wp_get_current_user();
+    $password = (string) wp_unslash( $_POST['password'] ?? '' );
+    if ( ! $user || ! $password || ! wp_check_password( $password, $user->user_pass, $user->ID ) ) wp_send_json_error( 'Current administrator password was not accepted.' );
+    $result = SWPS_Slack_Alerts::save( (string) wp_unslash( $_POST['webhook'] ?? '' ) );
+    if ( is_wp_error( $result ) ) wp_send_json_error( $result->get_error_message() );
+    SWPS_Activity_Log::add( 'slack_webhook_saved', 'warning', 'Slack security-alert webhook was saved or replaced by user #' . $user->ID . '.' );
+    wp_send_json_success( 'Slack webhook saved securely. Use “Send Slack Test” to verify it.' );
+}
+
+add_action( 'wp_ajax_swps_test_slack_webhook', 'swps_ajax_test_slack_webhook' );
+function swps_ajax_test_slack_webhook() {
+    check_ajax_referer( 'swps_nonce', 'nonce' );
+    if ( ! current_user_can( 'manage_options' ) ) wp_send_json_error( 'Unauthorized.' );
+    if ( ! SWPS_Slack_Alerts::configured() ) wp_send_json_error( 'Save a Slack webhook first.' );
+    $sent = SWPS_Slack_Alerts::send( 'Slack alert test', 'This is a test security notification from WP Secure Pro.' );
+    if ( ! $sent ) wp_send_json_error( 'Slack did not accept the test. Check or replace the webhook URL.' );
+    wp_send_json_success( 'Test alert sent to Slack.' );
+}
+
+add_action( 'wp_ajax_swps_remove_slack_webhook', 'swps_ajax_remove_slack_webhook' );
+function swps_ajax_remove_slack_webhook() {
+    check_ajax_referer( 'swps_nonce', 'nonce' );
+    if ( ! current_user_can( 'manage_options' ) ) wp_send_json_error( 'Unauthorized.' );
+    $user = wp_get_current_user();
+    $password = (string) wp_unslash( $_POST['password'] ?? '' );
+    if ( ! $user || ! $password || ! wp_check_password( $password, $user->user_pass, $user->ID ) ) wp_send_json_error( 'Current administrator password was not accepted.' );
+    SWPS_Slack_Alerts::remove();
+    SWPS_Activity_Log::add( 'slack_webhook_removed', 'warning', 'Slack security-alert webhook was removed by user #' . $user->ID . '.' );
+    wp_send_json_success( 'Slack webhook removed from this site.' );
 }
 
 // Full Scan — scan settings + schedule

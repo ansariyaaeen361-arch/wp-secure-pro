@@ -104,12 +104,17 @@ class SWPS_DB {
             'blacklist_monitor_enabled' => 1,
             'anomaly_detection_enabled' => 1,
             'uptime_enabled'            => 1,
+            'uptime_alert_down'          => 1,
+            'uptime_alert_recover'       => 1,
+            'live_traffic_enabled'       => 1,
             'vuln_auto_scan'            => 1,
+            'admin_creation_lock'        => 1,
 
-            // 2FA system ON — this only makes 2FA *available*; it never forces
-            // anyone (2fa_require_for is empty) and cannot lock anyone out until
-            // a user opts in from their own profile. So it is safe by default.
+            // 2FA is enabled by default for every Administrator, including
+            // accounts that predate the plugin installation. Each admin may
+            // deliberately opt out from their own profile.
             'two_factor_enabled'        => 1,
+            '2fa_require_for'           => array( 'administrator' ),
 
             // Left OFF by default — these carry real risk or need owner input:
             //   geoip_enabled, away_mode_enabled, login_url  -> lockout risk
@@ -140,6 +145,16 @@ class SWPS_DB {
             if ( ! is_array( $hd_existing ) ) $hd_existing = array();
             update_option( 'swps_headers', array_merge( SWPS_Security_Headers::get_defaults(), $hd_existing ) );
         }
+    }
+
+    /** Apply the explicit secure profile when the owner activates the plugin. */
+    public static function apply_activation_security_profile() {
+        $settings = get_option( 'swps_settings', array() );
+        if ( ! is_array( $settings ) ) $settings = array();
+        foreach ( array( 'waf_enabled','waf_sqli','waf_xss','waf_lfi','waf_rfi','waf_bad_bot','file_monitor_enabled','fim_enabled','email_alerts','alert_new_admin','alert_file_change','rate_limiter_enabled','progressive_bf_enabled','honeypot_enabled','challenge_page_enabled','pwned_check_enabled','core_repair_enabled','ssl_monitor_enabled','blacklist_monitor_enabled','anomaly_detection_enabled','uptime_enabled','uptime_alert_down','uptime_alert_recover','live_traffic_enabled','vuln_auto_scan','two_factor_enabled','admin_creation_lock' ) as $key ) $settings[$key] = 1;
+        $settings['2fa_require_for'] = array( 'administrator' );
+        $settings['waf_mode'] = 'block';
+        update_option( 'swps_settings', $settings );
     }
 
     /**
